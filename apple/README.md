@@ -1,4 +1,4 @@
-# Notepro — macOS shell (Spike B)
+# Nebula — macOS shell (Spike B)
 
 A thin SwiftUI + WKWebView app that hosts the portable web core (CodeMirror
 editor + in-process Markdown→LaTeX) and adds native file I/O + PDF export.
@@ -38,16 +38,16 @@ Files: `NoteproApp` (menus), `ContentView` (toolbar), `WebView`
 
 ```bash
 apple/build-app.sh          # one shot: vite build + xcodegen + xcodebuild + sign
-open Notepro.app            # at the repo root
+open Nebula.app             # at the repo root
 ```
 
 Or manually:
 ```bash
 cd web-core && npx vite build && cd ../apple
 xcodegen generate
-xcodebuild -project Notepro.xcodeproj -scheme Notepro -configuration Release \
+xcodebuild -project Nebula.xcodeproj -scheme Nebula -configuration Release \
   -derivedDataPath build CODE_SIGNING_ALLOWED=NO
-codesign --force --deep -s - build/Build/Products/Release/Notepro.app
+codesign --force --deep -s - build/Build/Products/Release/Nebula.app
 ```
 
 ## Requirements / notes

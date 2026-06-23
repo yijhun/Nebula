@@ -23,7 +23,10 @@ target/
 # Apple build artifacts
 apple/build/
 apple/Notepro.xcodeproj/
+apple/Nebula.xcodeproj/
+apple/*.xcodeproj/
 Notepro.app/
+Nebula.app/
 *.dSYM/
 .build/
 DerivedData/

@@ -2,7 +2,7 @@
   "name": "notepro",
   "private": true,
   "version": "0.0.0",
-  "description": "Notepro monorepo root (npm workspaces). The portable TS web core lives in web-core/.",
+  "description": "Nebula monorepo root (npm workspaces). The portable TS web core lives in web-core/.",
   "workspaces": [
     "web-core"
   ],

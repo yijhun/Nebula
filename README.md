@@ -1,4 +1,6 @@
-# Notepro
+# Nebula
+
+> **N**ot**e** **Bu**i**l**t in **A**stronomy — a note app built for astronomers.
 
 A macOS hybrid note app for academic & astronomy research: draft in **Markdown**,
 publish in **LaTeX**. Obsidian-compatible vault, live preview, in-place
@@ -49,7 +51,8 @@ Swift owns:  vault file I/O, PDF export (Process → tectonic), menus/toolbar,
 Web owns:    editing + Markdown↔LaTeX conversion (no platform assumptions).
 ```
 
-- `apple/Notepro/` — the macOS app (SwiftUI).
+- `apple/Notepro/` — the macOS app (SwiftUI). (Folder name preserved from the
+  project's original `Notepro` codename; the built app is `Nebula.app`.)
 - `web-core/` — portable TypeScript core (CodeMirror 6 editor + unified/remark
   Markdown→LaTeX), bundled to one `dist/index.html` via Vite.
 - `crates/pdf-compiler/` — experimental Rust compile helper (spike).
@@ -69,7 +72,7 @@ Web owns:    editing + Markdown↔LaTeX conversion (no platform assumptions).
 ```bash
 npm install            # installs the web-core workspace deps
 apple/build-app.sh     # vite build → xcodegen → xcodebuild → ad-hoc sign
-open Notepro.app
+open Nebula.app
 ```
 
 To work on the web core alone:

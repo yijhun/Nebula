@@ -85,7 +85,7 @@ struct SettingsView: View {
         guard !req.isEmpty else { return }
         assistantBusy = true; assistantStatus = "思考中…"
         let prompt = """
-        你是 Notepro 的設定助手。依使用者需求輸出一個 JSON 物件，只包含需要「變更」的鍵，值需在允許範圍內。只輸出 JSON，不要解釋或 markdown 圍欄。
+        你是 Nebula 的設定助手。依使用者需求輸出一個 JSON 物件，只包含需要「變更」的鍵，值需在允許範圍內。只輸出 JSON，不要解釋或 markdown 圍欄。
         可用鍵：
         theme: "system"|"light"|"dark"
         vimMode: true|false

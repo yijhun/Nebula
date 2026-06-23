@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Notepro.app end-to-end: web core -> Xcode project -> .app -> ad-hoc sign.
+# Build Nebula.app end-to-end: web core -> Xcode project -> .app -> ad-hoc sign.
 # Usage: apple/build-app.sh   (run from anywhere)
 set -euo pipefail
 
@@ -13,15 +13,15 @@ echo "==> [2/4] Generating Xcode project (xcodegen)…"
 ( cd "$ROOT/apple" && xcodegen generate )
 
 echo "==> [3/4] Building app (xcodebuild)…"
-( cd "$ROOT/apple" && xcodebuild -project Notepro.xcodeproj -scheme Notepro \
+( cd "$ROOT/apple" && xcodebuild -project Nebula.xcodeproj -scheme Nebula \
     -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO -quiet )
 
-APP="$ROOT/apple/build/Build/Products/Release/Notepro.app"
+APP="$ROOT/apple/build/Build/Products/Release/Nebula.app"
 echo "==> [4/4] Ad-hoc signing + copying to repo root…"
 codesign --force --deep -s - "$APP"
-rm -rf "$ROOT/Notepro.app"
-cp -R "$APP" "$ROOT/Notepro.app"
-codesign --force --deep -s - "$ROOT/Notepro.app"
+rm -rf "$ROOT/Nebula.app"
+cp -R "$APP" "$ROOT/Nebula.app"
+codesign --force --deep -s - "$ROOT/Nebula.app"
 
-echo "✅ Built: $ROOT/Notepro.app"
-echo "   Open it with:  open \"$ROOT/Notepro.app\""
+echo "✅ Built: $ROOT/Nebula.app"
+echo "   Open it with:  open \"$ROOT/Nebula.app\""

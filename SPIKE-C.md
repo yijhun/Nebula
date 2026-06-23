@@ -51,7 +51,7 @@ This meets the plan's Spike C criterion ("unmodified Tasks plugin loads").
 - The shim is a **public-API subset**. Plugins that reach into Obsidian
   internals will hit gaps (surfaced as clear `require`/undefined errors — the
   loader rejects unknown modules so gaps are visible).
-- Not yet integrated into `Notepro.app` — Spike C is a standalone validated
+- Not yet integrated into `Nebula.app` — Spike C is a standalone validated
   harness. Wiring the plugin runtime into the app is the next step.
 
 ## Conclusion

@@ -1,4 +1,7 @@
-name: Notepro
+name: Nebula
+# "Nebula" — Note Built in Astronomy.
+# Internal target/folder/bundle-id keep the original "Notepro" name to preserve
+# users' existing @AppStorage settings and the on-disk semantic-index location.
 options:
   bundleIdPrefix: com.notepro
   deploymentTarget:
@@ -15,11 +18,11 @@ settings:
     ENABLE_APP_SANDBOX: "NO"
     MARKETING_VERSION: "0.1"
 targets:
-  Notepro:
+  Nebula:
     type: application
     platform: macOS
     sources:
-      - path: Notepro
+      - path: Notepro    # the source folder name is unchanged
     postBuildScripts:
       # Embed the self-contained editor bundle (run `vite build` first).
       # Out-of-tree single-file resources are unreliable via the resources list,
@@ -39,7 +42,7 @@ targets:
     info:
       path: Notepro/Info.plist
       properties:
-        CFBundleDisplayName: Notepro
+        CFBundleDisplayName: Nebula
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
@@ -47,10 +50,10 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         # Microphone access for recording talks → transcription (whisper).
-        NSMicrophoneUsageDescription: Notepro 需要麥克風來錄製演講並轉成逐字稿。
+        NSMicrophoneUsageDescription: Nebula 需要麥克風來錄製演講並轉成逐字稿。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notepro.app
-        PRODUCT_NAME: Notepro
+        PRODUCT_NAME: Nebula
         GENERATE_INFOPLIST_FILE: "NO"
         COMBINE_HIDPI_IMAGES: "YES"

@@ -1,4 +1,4 @@
-# Markdown → LaTeX mapping (Notepro M1)
+# Markdown → LaTeX mapping (Nebula M1)
 
 This is the **source of truth** for how the converter emits LaTeX. (The plan
 referenced `DESIGN.md §4.5`, which was not present in the repo; this table was
