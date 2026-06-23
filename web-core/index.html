@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Notepro</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #282c34;
+      }
+      /* Light theme (set via window.notepro.setTheme) */
+      body.np-light,
+      body.np-light #editor {
+        background: #ffffff;
+      }
+      body.np-light .cm-scroller {
+        color: #1d1f23;
+      }
+      body.np-light #preview {
+        border-left-color: #e6e6e9;
+      }
+      #app {
+        display: flex;
+        height: 100%;
+        width: 100%;
+      }
+      #editor {
+        flex: 1 1 50%;
+        min-width: 0;
+        height: 100%;
+        display: flex;
+      }
+      #preview {
+        flex: 1 1 50%;
+        min-width: 0;
+        height: 100%;
+        overflow: auto;
+        background: #ffffff;
+        color: #1d1f23;
+        border-left: 1px solid #1b1d23;
+        padding: 28px 36px;
+        box-sizing: border-box;
+        font-family: -apple-system, "PingFang TC", "Helvetica Neue", sans-serif;
+        font-size: 15px;
+        line-height: 1.7;
+      }
+      /* View modes (set by window.notepro.setViewMode) */
+      #app.mode-edit #preview,
+      #app.mode-live #preview {
+        display: none;
+      }
+      #app.mode-edit #editor,
+      #app.mode-live #editor {
+        flex-basis: 100%;
+      }
+      /* In Live Preview, widen the text column so it reads like a document. */
+      #app.mode-live .cm-content {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 8px 24px;
+      }
+      #app.mode-preview #editor {
+        display: none;
+      }
+      #app.mode-preview #preview {
+        flex-basis: 100%;
+        border-left: none;
+      }
+
+      /* Solid (non-blinking) cursor: a blinking caret keeps the WebView
+         compositor repainting forever, which can cause a faint coil-whine on
+         some Macs. A static caret stops the continuous repaint. */
+      .cm-cursorLayer { animation: none !important; }
+      .cm-editor {
+        height: 100%;
+        width: 100%;
+      }
+      .cm-scroller,
+      .cm-content,
+      .cm-line {
+        font-family: var(--np-font-family, ui-monospace, "SF Mono", Menlo, monospace);
+        font-size: var(--np-font-size, 14px);
+        line-height: var(--np-line-height, 1.6);
+      }
+
+      /* Preview typography */
+      #preview h1,
+      #preview h2,
+      #preview h3 {
+        line-height: 1.3;
+        margin-top: 1.2em;
+      }
+      #preview h1 {
+        border-bottom: 1px solid #e3e3e6;
+        padding-bottom: 0.2em;
+      }
+      #preview code {
+        background: #f0f1f3;
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 0.9em;
+      }
+      #preview pre {
+        background: #f6f7f9;
+        padding: 12px 14px;
+        border-radius: 6px;
+        overflow: auto;
+      }
+      #preview pre code {
+        background: none;
+        padding: 0;
+      }
+      #preview blockquote {
+        margin: 0;
+        padding: 0.2em 1em;
+        color: #555;
+        border-left: 3px solid #d0d2d6;
+      }
+      #preview table {
+        border-collapse: collapse;
+      }
+      #preview th,
+      #preview td {
+        border: 1px solid #dcdee2;
+        padding: 6px 10px;
+      }
+      #preview img {
+        max-width: 100%;
+      }
+      .np-preview-error {
+        color: #b00020;
+        white-space: pre-wrap;
+      }
+      /* In-place "to LaTeX" view: the generated .tex source, monospace. */
+      #app.mode-tex #preview {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .np-tex-source {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #1d1f23;
+      }
+      body.np-dark #preview .np-tex-source { color: #c8ccd4; }
+      #preview .np-cite {
+        color: #2563eb;
+        background: #eef2ff;
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 0.92em;
+        white-space: nowrap;
+      }
+      #preview .np-wikilink {
+        color: #7c3aed;
+        text-decoration: none;
+        border-bottom: 1px solid #c4b5fd;
+        cursor: pointer;
+      }
+      #preview .np-wikilink:hover {
+        background: #f3eeff;
+      }
+      #preview .np-wikilink-broken {
+        color: #b00020;
+        border-bottom: 1px dashed #e2a0a0;
+      }
+      /* Document structure navigator (outline + figures/tables) */
+      .np-outline {
+        flex: 0 0 240px;
+        width: 240px;
+        height: 100%;
+        min-width: 0;
+        background: #21252b;
+        color: #c8ccd4;
+        border-right: 1px solid #181a1f;
+        display: flex;
+        flex-direction: column;
+        font-family: -apple-system, "PingFang TC", sans-serif;
+        font-size: 13px;
+      }
+      body.np-light .np-outline {
+        background: #f4f5f7;
+        color: #2b2f36;
+        border-right-color: #e0e2e6;
+      }
+      .np-outline-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 10px;
+        font-weight: 600;
+        border-bottom: 1px solid #181a1f;
+      }
+      body.np-light .np-outline-head {
+        border-bottom-color: #e0e2e6;
+      }
+      .np-outline-head button {
+        background: none;
+        border: none;
+        color: inherit;
+        cursor: pointer;
+        font-size: 13px;
+        opacity: 0.6;
+      }
+      .np-outline-head button:hover {
+        opacity: 1;
+      }
+      .np-outline-list {
+        overflow: auto;
+        flex: 1;
+        padding: 4px 0;
+      }
+      .np-outline-row {
+        padding: 4px 10px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .np-outline-row:hover {
+        background: rgba(127, 127, 127, 0.18);
+      }
+      .np-k-heading {
+        font-weight: 500;
+      }
+      .np-k-figure,
+      .np-k-table {
+        color: #8a8f99;
+      }
+      .np-orphan {
+        color: #d98c3a;
+      }
+      .np-outline-warn {
+        font-size: 0.85em;
+      }
+      .np-outline-empty {
+        padding: 10px;
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="editor"></div>
+      <div id="preview"></div>
+    </div>
+    <script>
+      // Capture any boot/runtime JS error and report it to the native side so
+      // failures (e.g. a module that throws on import) are diagnosable.
+      (function () {
+        function report(msg) {
+          try {
+            window.webkit.messageHandlers.notepro.postMessage({ type: "jserror", message: String(msg) });
+          } catch (e) {}
+        }
+        window.onerror = function (m, src, line, col, err) {
+          report((err && err.stack) || m + " @" + src + ":" + line + ":" + col);
+        };
+        window.addEventListener("unhandledrejection", function (e) {
+          report("unhandledrejection: " + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+        });
+      })();
+    </script>
+    <script type="module" src="/src/editor/main.ts"></script>
+  </body>
+</html>

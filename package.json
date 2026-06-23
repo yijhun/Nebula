@@ -1,0 +1,14 @@
+{
+  "name": "notepro",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Notepro monorepo root (npm workspaces). The portable TS web core lives in web-core/.",
+  "workspaces": [
+    "web-core"
+  ],
+  "scripts": {
+    "test": "npm run -w web-core test",
+    "build": "npm run -w web-core build",
+    "md2tex": "npm run -w web-core md2tex --"
+  }
+}

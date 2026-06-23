@@ -1,0 +1,38 @@
+% Notepro template: academic
+% Engine: XeLaTeX (Tectonic). A4, wider margins, section numbering, TOC-ready.
+% Placeholders: PREAMBLE, TITLE, AUTHOR, DATE, BODY, BIB
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{amsmath}
+\usepackage{amssymb}
+% --- CJK (XeLaTeX) ---
+\usepackage{ctex}
+\usepackage[backend=bibtex,style=numeric]{biblatex}
+\addbibresource{references.bib}
+\title{相對論筆記 Notes on Relativity}
+\author{Ada Lovelace}
+\date{\today}
+\begin{document}
+\maketitle
+\begin{abstract}
+\end{abstract}
+\section{引言 Introduction}
+
+愛因斯坦在 1905 年提出狹義相對論，其質能等價關係為 $E = mc^2$。
+
+考慮以下積分作為一個範例公式：
+
+\[
+\int_0^\infty e^{-x^2} \, dx = \frac{\sqrt{\pi}}{2}
+\]
+
+這個結果在量子力學中經常出現 \autocite{dirac1930}。
+
+\subsection{結論 Conclusion}
+
+理論物理的優雅之處在於用簡潔的數學描述自然 \autocite[p. 42]{feynman1965}。
+
+\printbibliography
+\end{document}

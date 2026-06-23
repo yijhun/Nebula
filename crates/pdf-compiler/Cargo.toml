@@ -1,0 +1,16 @@
+[package]
+name = "pdf_compiler"
+version = "0.1.0"
+edition = "2021"
+description = "Notepro: Tectonic wrapper exposing a C ABI for the Apple shell (Spike A)."
+
+[lib]
+# staticlib -> libpdf_compiler.a for the XCFramework (iOS/macOS).
+# rlib      -> lets us write host-side integration tests / examples.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+tectonic = "0.16"
+# Must match the version tectonic 0.16.9 resolves (0.4.1) so the `dyn Bundle`
+# trait objects unify across the driver boundary.
+tectonic_bundles = "0.4"

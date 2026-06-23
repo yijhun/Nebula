@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+web-core/dist/
+dist/
+
+# Generated LaTeX artifacts
+*.tex.out
+references.bib
+out.tex
+*.pdf
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.log
+*.run.xml
+
+# Rust build artifacts (crates/pdf-compiler/target is multi-GB)
+target/
+
+# Apple build artifacts
+apple/build/
+apple/Notepro.xcodeproj/
+Notepro.app/
+*.dSYM/
+.build/
+DerivedData/
+
+# Local tooling / editor state
+.claude/
+.vscode/
+
+# Spike C: downloaded third-party plugin bundles (fetched, not ours)
+spike-c/plugins/
+web-core/spike-c-plugins/
+
+# OS / editor
+.DS_Store

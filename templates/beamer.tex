@@ -1,0 +1,20 @@
+% Notepro template: beamer (slides)
+% Engine: XeLaTeX (Tectonic).
+% NOTE (M1 limitation): the emitter maps Markdown headings to \section, not to
+% \begin{frame}. For real slide decks, body content should be wrapped in frames;
+% this template renders the converted body inside a single frame as a starting
+% point. Frame-splitting from headings is deferred to a later milestone.
+% Placeholders: PREAMBLE, TITLE, AUTHOR, DATE, BODY, BIB
+\documentclass{beamer}
+\usetheme{default}
+{{PREAMBLE}}
+\title{{{TITLE}}}
+\author{{{AUTHOR}}}
+\date{{{DATE}}}
+\begin{document}
+\frame{\titlepage}
+\begin{frame}[allowframebreaks]{}
+{{BODY}}
+\end{frame}
+{{BIB}}
+\end{document}

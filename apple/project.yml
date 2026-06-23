@@ -1,0 +1,56 @@
+name: Notepro
+options:
+  bundleIdPrefix: com.notepro
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    ENABLE_HARDENED_RUNTIME: "NO"
+    ENABLE_APP_SANDBOX: "NO"
+    MARKETING_VERSION: "0.1"
+targets:
+  Notepro:
+    type: application
+    platform: macOS
+    sources:
+      - path: Notepro
+    postBuildScripts:
+      # Embed the self-contained editor bundle (run `vite build` first).
+      # Out-of-tree single-file resources are unreliable via the resources list,
+      # so copy it into Contents/Resources directly.
+      - name: Embed web core (dist/index.html)
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          SRC="$PROJECT_DIR/../web-core/dist/index.html"
+          DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          if [ ! -f "$SRC" ]; then
+            echo "error: $SRC not found — run 'npx vite build' in web-core first" >&2
+            exit 1
+          fi
+          mkdir -p "$DEST"
+          cp "$SRC" "$DEST/index.html"
+    info:
+      path: Notepro/Info.plist
+      properties:
+        CFBundleDisplayName: Notepro
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: "14.0"
+        NSHighResolutionCapable: true
+        # Allow HTTP to localhost (the Ollama AI server).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # Microphone access for recording talks → transcription (whisper).
+        NSMicrophoneUsageDescription: Notepro 需要麥克風來錄製演講並轉成逐字稿。
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.notepro.app
+        PRODUCT_NAME: Notepro
+        GENERATE_INFOPLIST_FILE: "NO"
+        COMBINE_HIDPI_IMAGES: "YES"

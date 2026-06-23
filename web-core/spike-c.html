@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>Notepro — Spike C harness</title>
+    <style>
+      body { font-family: ui-monospace, Menlo, monospace; margin: 16px; background: #1e1e1e; color: #ddd; }
+      h1 { font-size: 15px; }
+      #out { white-space: pre-wrap; background: #111; padding: 12px; border-radius: 6px; }
+      .notice { background: #333; padding: 6px 10px; margin: 4px 0; border-radius: 4px; }
+      #notice-container { position: fixed; top: 8px; right: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Spike C — loading unmodified Obsidian plugins against the shim</h1>
+    <div id="out">running…</div>
+    <script type="module" src="/src/spike-c/harness.ts"></script>
+  </body>
+</html>

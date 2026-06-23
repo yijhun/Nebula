@@ -1,0 +1,586 @@
+/**
+ * editor/main.ts — CodeMirror editor for the web core, supporting two formats:
+ *   - Markdown: GFM + inline live preview + split HTML preview + Markdown→LaTeX.
+ *   - LaTeX (.tex): stex syntax highlighting; compiled directly to PDF.
+ *
+ * The language/preview extensions live in a Compartment so the native shell can
+ * switch modes per file (by extension) without recreating the editor.
+ */
+import { EditorState, Compartment } from "@codemirror/state";
+import {
+  EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection,
+} from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from "@codemirror/search";
+import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
+import { markdown } from "@codemirror/lang-markdown";
+import { GFM } from "@lezer/markdown";
+import {
+  syntaxHighlighting, defaultHighlightStyle, StreamLanguage,
+  codeFolding, foldGutter, foldKeymap,
+} from "@codemirror/language";
+import { stex } from "@codemirror/legacy-modes/mode/stex";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { convert } from "../latex/index.js";
+import { convertProject } from "../latex/project.js";
+import { latexToMarkdown } from "../latex/to-markdown.js";
+import { lintLatex } from "./lint.js";
+import { skeletonFor } from "../latex/builtin-templates.js";
+import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from "./preview.js";
+import { livePreview, refreshLivePreview } from "./livePreview.js";
+import { openAI } from "./ai.js";
+import { openCite } from "./cite.js";
+import { latexAutocomplete } from "./complete.js";
+import { parseStructure } from "./outline.js";
+import { setNoteNames } from "./notes.js";
+import { setLang, t } from "./i18n.js";
+import { vim } from "@replit/codemirror-vim";
+import { call, rpcResolve } from "./bridge.js";
+import { getConfig, mergeConfig, type NoteproConfig } from "./config.js";
+
+type ViewMode = "edit" | "live" | "split" | "preview" | "tex";
+type Mode = "markdown" | "latex";
+
+let view: EditorView;
+let previewEl: HTMLElement | null = null;
+let appEl: HTMLElement | null = null;
+let renderTimer: number | undefined;
+let mode: Mode = "markdown";
+let viewMode: ViewMode = "split";
+
+/** Live linter: flag unbalanced $/$$/{}/\begin by underlining the offending
+ * line (gutter marker + hover message), updated as you type. */
+const latexLinter = linter((view) => {
+  const doc = view.state.doc;
+  const out: Diagnostic[] = [];
+  // Markdown: only flag math-delimiter ($/$$) issues; full brace/\[\] checks
+  // (which would false-positive on prose/code braces) are for LaTeX docs.
+  for (const issue of lintLatex(doc.toString(), { braces: mode === "latex" })) {
+    if (issue.line < 1 || issue.line > doc.lines) continue;
+    const line = doc.line(issue.line);
+    out.push({ from: line.from, to: line.to, severity: "error", message: issue.message });
+  }
+  return out;
+}, { delay: 500 });
+
+const langCompartment = new Compartment();
+const themeCompartment = new Compartment();
+const vimCompartment = new Compartment();
+const lpCompartment = new Compartment();   // inline Live Preview (on in "live" mode)
+
+// lang-markdown already provides Obsidian-style folding (heading sections via its
+// `headerIndent` foldService + block/code folding via foldNodeProp); codeFolding()
+// activates the fold state and foldGutter() shows the click-to-fold arrows.
+const markdownExtensions = [
+  markdown({ extensions: GFM }),
+  lpCompartment.of([]),
+  codeFolding(), foldGutter(),
+];
+const latexExtensions = [StreamLanguage.define(stex)];
+
+/** Inline Live Preview is on only in markdown "live" mode. */
+function applyLivePreview(): void {
+  const want = viewMode === "live" && mode === "markdown";
+  view.dispatch({ effects: lpCompartment.reconfigure(want ? livePreview : []) });
+}
+
+// --- Citation labels (author-year), fetched from Zotero, cached ---------------
+const citeLabels = new Map<string, string>();
+const citePending = new Set<string>();
+
+/** Fallback label parsed from a BBT citekey, e.g. "chen…1997" → "Chen (1997)". */
+function heuristicCiteLabel(key: string): string {
+  const a = /^([A-Za-z][a-z]+)/.exec(key);
+  const y = /(\d{4})/.exec(key);
+  const author = a ? a[1]!.charAt(0).toUpperCase() + a[1]!.slice(1) : key;
+  return y ? `${author} (${y[1]})` : key;
+}
+setCiteLabelResolver((k) =>
+  getConfig().previewCiteStyle === "citekey" ? k : (citeLabels.get(k) ?? heuristicCiteLabel(k)),
+);
+
+/** Fetch real "Author et al. (year)" labels for any keys not yet cached. */
+function ensureCiteLabels(keys: string[]): void {
+  const missing = keys.filter((k) => !citeLabels.has(k) && !citePending.has(k));
+  if (!missing.length) return;
+  missing.forEach((k) => citePending.add(k));
+  call("zotero.meta", { keys: missing })
+    .then((res) => {
+      const map = (res ?? {}) as Record<string, string>;
+      for (const k of missing) {
+        citePending.delete(k);
+        if (map[k]) citeLabels.set(k, map[k]);
+      }
+      scheduleRender(); // re-render with the real labels
+    })
+    .catch(() => missing.forEach((k) => citePending.delete(k)));
+}
+
+/** Apply font size / family / line-height from config via CSS variables. */
+function applyAppearance(): void {
+  const c = getConfig();
+  const root = document.documentElement.style;
+  root.setProperty("--np-font-size", `${c.fontSize}px`);
+  root.setProperty("--np-font-family", c.fontFamily);
+  root.setProperty("--np-line-height", String(c.lineHeight));
+}
+
+function postToHost(msg: unknown): void {
+  const handlers = (window as unknown as {
+    webkit?: { messageHandlers?: { notepro?: { postMessage(m: unknown): void } } };
+  }).webkit;
+  handlers?.messageHandlers?.notepro?.postMessage(msg);
+}
+
+let outlineTimer: number | undefined;
+/** Compute the document structure + word count and push to the native side. */
+function pushOutline(): void {
+  window.clearTimeout(outlineTimer);
+  outlineTimer = window.setTimeout(() => {
+    const text = view.state.doc.toString();
+    postToHost({ type: "outline", items: parseStructure(text, mode) });
+    const body = text.replace(/^---\n[\s\S]*?\n---/, "");        // drop frontmatter
+    postToHost({ type: "stats", words: (body.match(/\S+/g) ?? []).length });
+  }, 300);
+}
+
+/** Write a resized image's width back into the source as `![[ref|W]]`. */
+function setImageWidth(ref: string, width: number): void {
+  const doc = view.state.doc.toString();
+  const esc = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("!\\[\\[" + esc + "(?:\\|\\d+)?\\]\\]");
+  const m = re.exec(doc);
+  if (!m) return;
+  const replacement = `![[${ref}|${width}]]`;
+  view.dispatch({ changes: { from: m.index, to: m.index + m[0].length, insert: replacement } });
+}
+
+/** Scroll the editor to (and place the cursor on) a 1-based source line. */
+function jumpEditorToLine(line: number): void {
+  if (!Number.isFinite(line) || line < 1) return;
+  const l = Math.min(line, view.state.doc.lines);
+  const pos = view.state.doc.line(l).from;
+  view.dispatch({
+    selection: { anchor: pos },
+    effects: EditorView.scrollIntoView(pos, { y: "center" }),
+  });
+  view.focus();
+}
+
+/** Align the preview to the editor's current line (scroll the matching block
+ * into view) without stealing focus. */
+function syncPreviewToLine(line: number): void {
+  if (!previewEl) return;
+  let best: HTMLElement | null = null;
+  let bestLine = -1;
+  for (const el of Array.from(previewEl.querySelectorAll<HTMLElement>("[data-line]"))) {
+    const dl = Number(el.getAttribute("data-line"));
+    if (dl <= line && dl > bestLine) { bestLine = dl; best = el; }
+  }
+  if (best) best.scrollIntoView({ block: "center" });
+}
+
+/** Patch the preview in place: replace only top-level blocks whose HTML
+ * changed, and keep the scroll position. Avoids the full-innerHTML wipe that
+ * flickered, jumped to the top, and re-typeset every (unchanged) equation. */
+function morphPreview(html: string): void {
+  if (!previewEl) return;
+  const scroll = previewEl.scrollTop;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  const next = Array.from(tmp.childNodes);
+  const cur = Array.from(previewEl.childNodes);
+  const n = Math.max(next.length, cur.length);
+  for (let i = 0; i < n; i++) {
+    const o = cur[i];
+    const w = next[i];
+    if (!w) { if (o) previewEl.removeChild(o); continue; }
+    if (!o) { previewEl.appendChild(w); continue; }
+    const oh = o instanceof Element ? o.outerHTML : o.textContent;
+    const wh = w instanceof Element ? w.outerHTML : w.textContent;
+    if (oh !== wh) previewEl.replaceChild(w, o);
+  }
+  previewEl.scrollTop = scroll;
+}
+
+function scheduleRender(): void {
+  if (!previewEl) return;
+  // Perf: in edit/live mode the #preview pane is hidden — skip rendering it
+  // entirely (the live decorations handle the in-editor view). Big win on long
+  // documents where the full remark/MathJax render is the bottleneck.
+  if (mode === "markdown" && (viewMode === "edit" || viewMode === "live")) return;
+  window.clearTimeout(renderTimer);
+  // Adaptive debounce: snappy for normal notes, calmer for very large ones so
+  // huge files don't re-render the whole preview on every keystroke.
+  const len = view.state.doc.length;
+  const delay = len > 60000 ? 500 : len > 20000 ? 320 : 200;
+  renderTimer = window.setTimeout(() => {
+    if (!previewEl) return;
+    if (mode === "latex") {
+      previewEl.innerHTML =
+        `<p style="color:#888">${t("LaTeX 原始檔 — 用「匯出 PDF」直接編譯。")}</p>`;
+    } else if (viewMode === "tex") {
+      renderTexSource();
+    } else {
+      const html = renderHtml(view.state.doc.toString());
+      ensureCiteLabels(getLastCiteKeys());
+      morphPreview(html);
+    }
+  }, delay);
+}
+
+/** Render the live Markdown→LaTeX source into the preview pane (in-place "to
+ * LaTeX" — no files, no compile). Updates only when the source changes. */
+function renderTexSource(): void {
+  if (!previewEl) return;
+  let tex: string;
+  try {
+    tex = convert(view.state.doc.toString(), {
+      bibBackend: "bibtex",
+      defaultTemplate: getConfig().defaultTemplate,
+    }).tex;
+  } catch (e) {
+    previewEl.innerHTML = `<pre class="np-preview-error">${e instanceof Error ? e.message : String(e)}</pre>`;
+    return;
+  }
+  const cur = previewEl.firstElementChild;
+  if (cur instanceof HTMLPreElement && cur.textContent === tex) return; // unchanged
+  const pre = document.createElement("pre");
+  pre.className = "np-tex-source";
+  pre.textContent = tex;
+  previewEl.replaceChildren(pre);
+}
+
+const api = {
+  setContent(text: string): void {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    scheduleRender();
+    pushOutline();
+    postToHost({ type: "loaded" });
+  },
+  getContent(): string {
+    return view.state.doc.toString();
+  },
+  /** Switch editor language: "markdown" or "latex". */
+  setMode(next: Mode): void {
+    mode = next;
+    view.dispatch({
+      effects: langCompartment.reconfigure(
+        next === "latex" ? latexExtensions : markdownExtensions,
+      ),
+    });
+    if (next === "latex") api.setViewMode("edit");
+    else applyLivePreview();
+    pushOutline();
+    scheduleRender();
+  },
+  /** Convert the current Markdown doc to LaTeX (optionally with a template). */
+  toLatex(templateId?: string): string {
+    const r = convert(view.state.doc.toString(), {
+      bibBackend: "bibtex",
+      defaultTemplate: getConfig().defaultTemplate,
+      ...(templateId ? { template: templateId } : {}),
+    });
+    return JSON.stringify({ tex: r.tex, bib: r.bib, keys: r.citationKeys });
+  },
+  /** Convert the current LaTeX doc back to Obsidian-flavored Markdown. */
+  fromLatex(): string {
+    return latexToMarkdown(view.state.doc.toString());
+  },
+  /** Check the doc for unbalanced $/$$/\begin — returns JSON [{line,message}].
+   * `full` (default true) also checks {}/\[\]; pass false for Markdown. */
+  lintLatex(full = true): string {
+    return JSON.stringify(lintLatex(view.state.doc.toString(), { braces: full }));
+  },
+  /** Read the YAML frontmatter as ordered [key, value] pairs (JSON). */
+  getFrontmatter(): string {
+    const m = /^---\n([\s\S]*?)\n---/.exec(view.state.doc.toString());
+    const fields: Array<[string, string]> = [];
+    if (m) {
+      for (const line of m[1]!.split("\n")) {
+        const mm = /^([^:\n]+):\s?(.*)$/.exec(line);
+        if (mm) fields.push([mm[1]!.trim(), mm[2]!]);
+      }
+    }
+    return JSON.stringify(fields);
+  },
+  /** Set (or add) a frontmatter key, creating the `---` block if absent. */
+  setFrontmatterField(key: string, value: string): void {
+    const doc = view.state.doc.toString();
+    const m = /^---\n([\s\S]*?)\n---/.exec(doc);
+    if (m) {
+      const lines = m[1]!.split("\n");
+      let found = false;
+      for (let i = 0; i < lines.length; i++) {
+        const mm = /^([^:\n]+):/.exec(lines[i]!);
+        if (mm && mm[1]!.trim() === key) { lines[i] = `${key}: ${value}`; found = true; break; }
+      }
+      if (!found) lines.push(`${key}: ${value}`);
+      view.dispatch({ changes: { from: 0, to: m[0].length, insert: `---\n${lines.join("\n")}\n---` } });
+    } else {
+      view.dispatch({ changes: { from: 0, insert: `---\n${key}: ${value}\n---\n\n` } });
+    }
+    scheduleRender();
+  },
+  /** Remove a frontmatter key (drops the whole block if it becomes empty). */
+  removeFrontmatterField(key: string): void {
+    const doc = view.state.doc.toString();
+    const m = /^---\n([\s\S]*?)\n---/.exec(doc);
+    if (!m) return;
+    const kept = m[1]!.split("\n").filter((l) => {
+      const mm = /^([^:\n]+):/.exec(l);
+      return !(mm && mm[1]!.trim() === key);
+    });
+    const insert = kept.length ? `---\n${kept.join("\n")}\n---` : "";
+    let to = m[0].length;
+    if (!kept.length && doc[to] === "\n") to += 1; // also drop the trailing newline
+    view.dispatch({ changes: { from: 0, to, insert } });
+    scheduleRender();
+  },
+  /** Assemble a multi-file project paper from chapter md strings. `json` is
+   * `{chapters:[{name,md}], template?, title?, author?, date?, bibBackend?}`.
+   * Returns `{master, flat, chapters:[{name,body}], citationKeys}` as JSON. */
+  buildProject(json: string): string {
+    try {
+      const p = JSON.parse(json) as {
+        chapters: { name: string; md: string }[];
+        template?: string; title?: string; author?: string;
+        date?: string; bibBackend?: "biber" | "bibtex";
+      };
+      const r = convertProject(p.chapters ?? [], {
+        bibBackend: "bibtex",
+        ...(p.template ? { template: p.template } : {}),
+        ...(p.title ? { title: p.title } : {}),
+        ...(p.author ? { author: p.author } : {}),
+        ...(p.date !== undefined ? { date: p.date } : {}),
+        ...(p.bibBackend ? { bibBackend: p.bibBackend } : {}),
+      });
+      return JSON.stringify(r);
+    } catch (e) {
+      return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+  /** Apply user config pushed from the native settings (JSON string). */
+  configure(json: string): void {
+    try {
+      mergeConfig(JSON.parse(json) as Partial<NoteproConfig>);
+    } catch {
+      return;
+    }
+    applyAppearance();
+    scheduleRender();
+  },
+  /** Insert a citation at the cursor (format depends on the document mode). */
+  insertCitation(key: string): void {
+    const cmd = getConfig().citeLatexCommand || "autocite";
+    const text = mode === "latex" ? `\\${cmd}{${key}}` : `[@${key}]`;
+    const pos = view.state.selection.main.head;
+    view.dispatch({
+      changes: { from: pos, insert: text },
+      selection: { anchor: pos + text.length },
+    });
+    view.focus();
+  },
+  /** Return a standalone .tex skeleton for "New from template". */
+  newFromTemplate(id: string): string {
+    return skeletonFor(id);
+  },
+  setViewMode(m: ViewMode): void {
+    if (!appEl) return;
+    viewMode = m;
+    appEl.classList.remove("mode-edit", "mode-live", "mode-split", "mode-preview", "mode-tex");
+    appEl.classList.add(`mode-${m}`);
+    applyLivePreview();
+    if (m === "split" || m === "preview" || m === "tex") scheduleRender();
+  },
+  /** Called by the native side to settle a bridge RPC (e.g. ai.edit). */
+  _rpcResolve(id: number, ok: boolean, payload: unknown): void {
+    rpcResolve(id, ok, payload);
+  },
+  /** Enable/disable Vim modal editing (nvim-style, no-mouse). */
+  setVim(on: boolean): void {
+    view.dispatch({ effects: vimCompartment.reconfigure(on ? vim() : []) });
+  },
+  /** Switch the editor + page appearance: "dark" or "light". */
+  setTheme(name: "dark" | "light"): void {
+    view.dispatch({ effects: themeCompartment.reconfigure(name === "dark" ? oneDark : []) });
+    document.body.classList.toggle("np-light", name === "light");
+    document.body.classList.toggle("np-dark", name !== "light");
+  },
+  /** Trigger the AI overlay programmatically (also bound to ⌘K). */
+  ai(): void {
+    openAI(view);
+  },
+  /** Trigger the Zotero cite picker programmatically (also bound to ⌘⇧K). */
+  cite(): void {
+    openCite((k) => api.insertCitation(k));
+  },
+  /** Open the in-document search panel (⌘F; also callable from the native menu). */
+  find(): void {
+    view.focus();
+    openSearchPanel(view);
+  },
+  /** Base paths for resolving vault images in the preview. */
+  setBasePaths(noteDir: string, vaultDir: string): void {
+    setBasePaths(noteDir, vaultDir);
+    // Force inline Live Preview to re-resolve image widgets' npimg:// src.
+    view.dispatch({ effects: refreshLivePreview.of() });
+    scheduleRender();
+  },
+  /** Insert text at the cursor (used by drag-and-drop image insertion). */
+  insertText(text: string): void {
+    const pos = view.state.selection.main.head;
+    view.dispatch({ changes: { from: pos, insert: text }, selection: { anchor: pos + text.length } });
+    view.focus();
+  },
+  /** Set the editor UI language ("en" | "zh"), pushed from the native shell. */
+  setLang(lang: string): void {
+    setLang(lang);
+    scheduleRender();
+  },
+  /** Receive the vault's note names (for `[[` completion + broken-link flags). */
+  setNoteList(json: string): void {
+    try {
+      setNoteNames(JSON.parse(json) as string[]);
+      scheduleRender(); // re-evaluate broken-link styling
+    } catch {
+      /* ignore */
+    }
+  },
+  /** Scroll/place the cursor on a 1-based line (from a compile-error jump). */
+  scrollToLine(line: number): void {
+    jumpEditorToLine(line);
+  },
+  /** Scroll the editor to a character position (from the native outline). */
+  scrollToPos(pos: number): void {
+    const p = Math.max(0, Math.min(pos, view.state.doc.length));
+    view.dispatch({
+      selection: { anchor: p },
+      effects: EditorView.scrollIntoView(p, { y: "start", yMargin: 40 }),
+    });
+    view.focus();
+  },
+};
+(window as unknown as { notepro: typeof api }).notepro = api;
+
+function boot(): void {
+  appEl = document.getElementById("app");
+  const parent = document.getElementById("editor");
+  previewEl = document.getElementById("preview");
+  if (!parent) return;
+
+  // Drag an image file onto the editor/preview → send bytes to native, which
+  // saves it into the vault and inserts `![[name]]`. (Done in JS because the
+  // WKWebView swallows native drops in a private subview.)
+  document.addEventListener("dragover", (e) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  });
+  document.addEventListener("drop", (e) => {
+    const files = e.dataTransfer?.files;
+    if (!files || !files.length) return;
+    e.preventDefault();
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith("image/")) continue;
+      const reader = new FileReader();
+      reader.onload = () => postToHost({ type: "dropImage", name: f.name, data: String(reader.result) });
+      reader.readAsDataURL(f);
+    }
+  });
+
+  // Drag an embedded image's right edge to resize it; on release, write the
+  // width back as `![[ref|W]]` so it persists. Works on images in BOTH the
+  // split preview pane and inline in Live Preview (hence document-level).
+  let resizing: { img: HTMLImageElement; startX: number; startW: number } | null = null;
+  const EDGE = 14;
+  document.addEventListener("pointermove", (e) => {
+    if (resizing) return;
+    const img = (e.target as HTMLElement)?.closest("img[data-ref]") as HTMLImageElement | null;
+    if (img) {
+      const r = img.getBoundingClientRect();
+      img.style.cursor = e.clientX > r.right - EDGE ? "ew-resize" : "";
+    }
+  });
+  document.addEventListener("pointerdown", (e) => {
+    const img = (e.target as HTMLElement)?.closest("img[data-ref]") as HTMLImageElement | null;
+    if (!img) return;
+    const r = img.getBoundingClientRect();
+    if (e.clientX > r.right - EDGE) {
+      resizing = { img, startX: e.clientX, startW: r.width };
+      e.preventDefault();
+    }
+  }, true);   // capture: claim the edge-drag before CodeMirror handles the press
+  window.addEventListener("pointermove", (e) => {
+    if (!resizing) return;
+    const w = Math.max(40, Math.round(resizing.startW + (e.clientX - resizing.startX)));
+    resizing.img.style.width = `${w}px`;
+    resizing.img.style.maxWidth = "none";
+  });
+  window.addEventListener("pointerup", () => {
+    if (!resizing) return;
+    const ref = resizing.img.getAttribute("data-ref");
+    const w = Math.round(resizing.img.getBoundingClientRect().width);
+    resizing = null;
+    if (ref) setImageWidth(ref, w);
+  });
+
+  // Single click: open a [[wikilink]] (links stay one-click).
+  previewEl?.addEventListener("click", (e) => {
+    const a = (e.target as HTMLElement)?.closest(".np-wikilink") as HTMLElement | null;
+    if (!a) return;
+    e.preventDefault();
+    const target = a.getAttribute("data-target");
+    if (target) postToHost({ type: "openLink", target });
+  });
+  // Double click: jump the editor to that block's source line.
+  previewEl?.addEventListener("dblclick", (e) => {
+    const lined = (e.target as HTMLElement)?.closest("[data-line]") as HTMLElement | null;
+    if (lined) jumpEditorToLine(Number(lined.getAttribute("data-line")));
+  });
+
+  const onChange = EditorView.updateListener.of((u) => {
+    if (u.docChanged) {
+      postToHost({ type: "dirty" });
+      scheduleRender();
+      pushOutline();
+    } else if (u.selectionSet && mode === "markdown") {
+      // Cursor moved (click / arrows) → align the preview to the same line.
+      const line = u.state.doc.lineAt(u.state.selection.main.head).number;
+      syncPreviewToLine(line);
+    }
+  });
+
+  view = new EditorView({
+    parent,
+    state: EditorState.create({
+      doc: "# 歡迎使用 Notepro\n\n左邊輸入 **Markdown**，右邊即時預覽。⌘E 匯出 PDF。\n\n- [ ] 待辦\n- [x] 完成\n\n行內公式 $E = mc^2$。\n",
+      extensions: [
+        vimCompartment.of([]),           // Vim mode (toggled via settings) — highest precedence
+        lineNumbers(), highlightActiveLine(), drawSelection(),
+        history(),
+        search({ top: true }), highlightSelectionMatches(),
+        lintGutter(), latexLinter,
+        latexAutocomplete,
+        keymap.of([
+          { key: "Mod-k", run: (v) => { openAI(v); return true; } },
+          { key: "Mod-Shift-k", run: () => { openCite((k) => api.insertCitation(k)); return true; } },
+          ...searchKeymap, ...foldKeymap, ...defaultKeymap, ...historyKeymap,
+        ]),
+        langCompartment.of(markdownExtensions),
+        syntaxHighlighting(defaultHighlightStyle),
+        themeCompartment.of(oneDark), EditorView.lineWrapping, onChange,
+      ],
+    }),
+  });
+
+  // Debug affordance (harmless): lets tooling drive the editor.
+  (window as unknown as { __editorView: EditorView }).__editorView = view;
+
+  applyAppearance();
+  api.setViewMode("split");
+  scheduleRender();
+  pushOutline();
+  postToHost({ type: "ready" });
+}
+
+if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", boot);
+else boot();
