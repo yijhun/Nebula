@@ -1,6 +1,6 @@
 # Nebula
 
-> **N**ot**e** **Bu**i**l**t in **A**stronomy — a note app built for astronomers.
+> Notes Bred in Astronomy — a note app built for astronomers.
 
 A macOS hybrid note app for academic & astronomy research: draft in **Markdown**,
 publish in **LaTeX**. Obsidian-compatible vault, live preview, in-place

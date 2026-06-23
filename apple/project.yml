@@ -1,5 +1,5 @@
 name: Nebula
-# "Nebula" — Note Built in Astronomy.
+# "Nebula" — Notes Bred in Astronomy.
 # Internal target/folder/bundle-id keep the original "Notepro" name to preserve
 # users' existing @AppStorage settings and the on-disk semantic-index location.
 options:
