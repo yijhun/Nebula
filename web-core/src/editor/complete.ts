@@ -361,15 +361,30 @@ interface DocToken { text: string; count: number }
 let cachedDoc = "";
 let cachedTokens: DocToken[] = [];
 const TOKEN_RE = new RegExp(
-  // \command optionally followed by _{…} / ^{…} / _letter / ^letter:
-  // captures `\frac`, `\sigma_T`, `\sigma_{ij}`, `\underbrace`, `\dot{n}` (\dot only).
-  String.raw`\\[a-zA-Z@]+(?:[_^](?:\{[^}]+\}|[A-Za-z0-9]))?` + "|" +
+  // \command + optional {arg} + optional _/^(brace|command|char):
+  // captures e.g. `\overline{n}_\gamma`, `\sigma_T`, `\dot{n}`, `\frac{a}`,
+  // `\underbrace{stuff}_{label}` (flat-brace contents only — nested braces
+  // give a truncated match that gets filtered by the balance check below).
+  String.raw`\\[a-zA-Z@]+(?:\{[^{}]*\})?(?:[_^](?:\\[a-zA-Z@]+|\{[^{}]*\}|[A-Za-z0-9]))?` + "|" +
   // identifier_{subscript} / identifier^{superscript}: `n_{HI}`, `M^{14}`
-  String.raw`[A-Za-z][A-Za-z0-9]*[_^]\{[^}]+\}` + "|" +
+  String.raw`[A-Za-z][A-Za-z0-9]*[_^]\{[^{}]+\}` + "|" +
   // identifier_letter / identifier^letter (short): `n_e`, `M^2`
   String.raw`[A-Za-z][A-Za-z0-9]*[_^][A-Za-z0-9]`,
   "g",
 );
+
+/** Are all `{` `}` in this token balanced and free of stray escapes? Filters
+ * out truncated matches from nested-brace expressions like
+ * `\underbrace{\overline{...}}_{...}` (the regex stops at the first `}`). */
+function isWellFormed(tok: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < tok.length; i++) {
+    if (tok[i] === "\\") { i++; continue; }
+    if (tok[i] === "{") depth++;
+    else if (tok[i] === "}") { depth--; if (depth < 0) return false; }
+  }
+  return depth === 0;
+}
 
 /** Map of tokens that the built-in OPTIONS list already covers — don't
  * re-show them via doc recall (would create duplicate completions). */
@@ -385,6 +400,9 @@ function tokensIn(doc: string): DocToken[] {
     // Skip plain `\command` already covered by the built-in list — only the
     // composite forms (`\sigma_T`, `n_{HI}`) are unique enough to be useful.
     if (tok.startsWith("\\") && BUILT_IN_LABELS.has(tok)) continue;
+    // Discard truncated matches from nested-brace expressions (the regex
+    // bails at the first `}`, which produces a malformed half-token).
+    if (!isWellFormed(tok)) continue;
     freq.set(tok, (freq.get(tok) ?? 0) + 1);
   }
   cachedDoc = doc;
