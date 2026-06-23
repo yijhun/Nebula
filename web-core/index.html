@@ -88,6 +88,14 @@
         border-radius: 2px;
       }
       .cm-editor.cm-focused .cm-matchingBracket { outline: 1px solid rgba(37, 99, 235, 0.55); }
+      /* Unmatched brackets / dollar signs — always-on, instant red flag. */
+      .np-unmatched-bracket {
+        color: #fff !important;
+        background: #dc2626 !important;
+        border-radius: 2px;
+        font-weight: 700;
+        box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.6);
+      }
       /* one-dark theme variant — softer blue on dark bg */
       .cm-editor[data-theme="dark"] .cm-matchingBracket, .cm-editor[data-theme="dark"] .cm-matchingBracket * {
         color: #82aaff !important;

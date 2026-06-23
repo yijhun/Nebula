@@ -29,6 +29,7 @@ import { lintLatex } from "./lint.js";
 import { skeletonFor } from "../latex/builtin-templates.js";
 import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from "./preview.js";
 import { livePreview, refreshLivePreview } from "./livePreview.js";
+import { unmatchedBrackets } from "./unmatched.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
 import { latexAutocomplete } from "./complete.js";
@@ -607,6 +608,10 @@ function boot(): void {
         // IDE-style bracket matching: highlights the partner of () [] {}
         // adjacent to the cursor (.cm-matchingBracket / cm-nonmatchingBracket).
         bracketMatching(),
+        // Always-on red highlight on UNMATCHED brackets and dollar signs.
+        // (`mode` here is the closure-captured top-level var that changes as
+        // the user switches md ⇄ tex.)
+        unmatchedBrackets({ get: () => mode }),
         keymap.of([
           { key: "Mod-k", run: (v) => { openAI(v); return true; } },
           { key: "Mod-Shift-k", run: () => { openCite((k) => api.insertCitation(k)); return true; } },
