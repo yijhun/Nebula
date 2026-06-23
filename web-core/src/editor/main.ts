@@ -18,7 +18,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import {
   syntaxHighlighting, defaultHighlightStyle, StreamLanguage,
-  codeFolding, foldGutter, foldKeymap,
+  codeFolding, foldGutter, foldKeymap, bracketMatching,
 } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -538,6 +538,38 @@ function boot(): void {
     if (lined) jumpEditorToLine(Number(lined.getAttribute("data-line")));
   });
 
+  // Smart $ — closeBrackets-style pairing but math-aware:
+  //   • cursor adjacent to a closing $   → overtype it (skip past), no insert
+  //   • inside an unclosed `$…` (odd # of unescaped $ before cursor) → single $
+  //   • otherwise                         → pair `$|$` (insert "$$", cursor mid)
+  // Beats the default symmetric pair, which would otherwise leave a stray $.
+  const smartDollar = EditorView.inputHandler.of((v, from, to, text) => {
+    if (text !== "$") return false;
+    const doc = v.state.doc;
+    const charAfter = to < doc.length ? doc.sliceString(to, to + 1) : "";
+    if (charAfter === "$") {                                     // overtype
+      v.dispatch({ selection: { anchor: to + 1 } });
+      return true;
+    }
+    const before = doc.sliceString(0, from);
+    let count = 0;
+    for (let i = 0; i < before.length; i++) {
+      if (before[i] === "$" && (i === 0 || before[i - 1] !== "\\")) count++;
+    }
+    if (count % 2 === 1) {                                       // close open math
+      v.dispatch({
+        changes: { from, to, insert: "$" },
+        selection: { anchor: from + 1 },
+      });
+      return true;
+    }
+    v.dispatch({                                                 // pair $|$
+      changes: { from, to, insert: "$$" },
+      selection: { anchor: from + 1 },
+    });
+    return true;
+  });
+
   const onChange = EditorView.updateListener.of((u) => {
     if (u.docChanged) {
       postToHost({ type: "dirty" });
@@ -561,13 +593,20 @@ function boot(): void {
         search({ top: true }), highlightSelectionMatches(),
         lintGutter(), latexLinter,
         latexAutocomplete,
-        // Auto-close pairs: built-in handles () [] {} "" '' (also skips/deletes
-        // smartly). Extra pairs ($$ for inline math, $$ display math, single
-        // backtick for inline code) are added via languageData below.
+        // Auto-close pairs: built-in handles () [] {} "" '' `` (skip/delete
+        // smartly via closeBracketsKeymap). $ is handled by the smart math
+        // handler below — pair on empty, but if there's an odd number of
+        // unescaped $ before the cursor (i.e. we're inside open `$…`), the
+        // next $ closes it (single insert), and if the closing $ is right
+        // next to the cursor, just overtype (don't double-insert).
         closeBrackets(),
         EditorState.languageData.of(() => [{
-          closeBrackets: { brackets: ["(", "[", "{", "\"", "'", "$", "`"] },
+          closeBrackets: { brackets: ["(", "[", "{", "\"", "'", "`"] },
         }]),
+        smartDollar,
+        // IDE-style bracket matching: highlights the partner of () [] {}
+        // adjacent to the cursor (.cm-matchingBracket / cm-nonmatchingBracket).
+        bracketMatching(),
         keymap.of([
           { key: "Mod-k", run: (v) => { openAI(v); return true; } },
           { key: "Mod-Shift-k", run: () => { openCite((k) => api.insertCitation(k)); return true; } },

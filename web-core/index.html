@@ -74,6 +74,25 @@
          compositor repainting forever, which can cause a faint coil-whine on
          some Macs. A static caret stops the continuous repaint. */
       .cm-cursorLayer { animation: none !important; }
+      /* IDE-style bracket matching: highlight the cursor-adjacent bracket
+         and its partner. Both light + dark themes look right. */
+      .cm-matchingBracket, .cm-matchingBracket * {
+        color: #2563eb !important;
+        background: rgba(37, 99, 235, 0.15);
+        border-radius: 2px;
+        font-weight: 700;
+      }
+      .cm-nonmatchingBracket, .cm-nonmatchingBracket * {
+        color: #dc2626 !important;
+        background: rgba(220, 38, 38, 0.18);
+        border-radius: 2px;
+      }
+      .cm-editor.cm-focused .cm-matchingBracket { outline: 1px solid rgba(37, 99, 235, 0.55); }
+      /* one-dark theme variant — softer blue on dark bg */
+      .cm-editor[data-theme="dark"] .cm-matchingBracket, .cm-editor[data-theme="dark"] .cm-matchingBracket * {
+        color: #82aaff !important;
+        background: rgba(130, 170, 255, 0.18);
+      }
       .cm-editor {
         height: 100%;
         width: 100%;
