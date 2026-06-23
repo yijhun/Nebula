@@ -214,6 +214,39 @@ const OPTIONS: Completion[] = [
 
 interface ZItem { citekey: string; title: string; authors: string; year: string; }
 
+// ─── Promote the most-used basic math primitives ────────────────────────
+// CodeMirror sorts a tier of fuzzy-matched results by `boost` (descending).
+// Without this, alphabetical order buries `\frac` under `\fbox`, etc. The
+// numbers are relative — what matters is the ordering they impose.
+const BOOST: Record<string, number> = {
+  // structure
+  "\\frac": 90, "\\sqrt": 88, "\\sum": 86, "\\int": 85, "\\prod": 80,
+  "\\binom": 70, "\\dfrac": 70, "\\partial": 78, "\\nabla": 70, "\\infty": 75,
+  // very-common Greek
+  "\\alpha": 60, "\\beta": 60, "\\gamma": 60, "\\delta": 60, "\\epsilon": 60,
+  "\\theta": 58, "\\lambda": 58, "\\mu": 58, "\\nu": 55, "\\pi": 60,
+  "\\rho": 55, "\\sigma": 60, "\\tau": 55, "\\phi": 58, "\\psi": 55, "\\omega": 58,
+  "\\Gamma": 50, "\\Delta": 55, "\\Theta": 50, "\\Lambda": 50, "\\Sigma": 55, "\\Omega": 55,
+  // common relations / arrows
+  "\\leq": 65, "\\geq": 65, "\\neq": 65, "\\approx": 60, "\\equiv": 55,
+  "\\cdot": 70, "\\times": 70, "\\to": 70, "\\rightarrow": 60,
+  // common operators
+  "\\sin": 65, "\\cos": 65, "\\tan": 60, "\\log": 60, "\\ln": 60, "\\exp": 60,
+  "\\lim": 65, "\\min": 60, "\\max": 60,
+  // common decorations (the user's case)
+  "\\hat": 70, "\\vec": 70, "\\bar": 65, "\\dot": 65, "\\overline": 65,
+  "\\widehat": 55, "\\tilde": 55, "\\underbrace": 50, "\\overbrace": 45,
+  // structural commands
+  "\\section": 65, "\\subsection": 60, "\\textbf": 70, "\\textit": 65, "\\emph": 50,
+  "\\label": 55, "\\ref": 60, "\\eqref": 55, "\\cite": 65, "\\citep": 60,
+};
+// Apply boosts in-place to the OPTIONS list.
+for (const c of OPTIONS) {
+  if (typeof c.label === "string" && BOOST[c.label] != null) {
+    (c as Completion).boost = BOOST[c.label];
+  }
+}
+
 /** Inside `\cite{…}` / `\autocite{…}` (or markdown `[@…`), complete citekeys
  * from the Zotero library (via the native bridge). Async. */
 const CITE_ARG = /\\[a-zA-Z]*cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)$/;
@@ -361,11 +394,13 @@ interface DocToken { text: string; count: number }
 let cachedDoc = "";
 let cachedTokens: DocToken[] = [];
 const TOKEN_RE = new RegExp(
-  // \command + optional {arg} + optional _/^(brace|command|char):
-  // captures e.g. `\overline{n}_\gamma`, `\sigma_T`, `\dot{n}`, `\frac{a}`,
-  // `\underbrace{stuff}_{label}` (flat-brace contents only — nested braces
-  // give a truncated match that gets filtered by the balance check below).
-  String.raw`\\[a-zA-Z@]+(?:\{[^{}]*\})?(?:[_^](?:\\[a-zA-Z@]+|\{[^{}]*\}|[A-Za-z0-9]))?` + "|" +
+  // \command + optional [opt] + any number of {arg} + optional sub/super:
+  // captures `\frac{a}{b}`, `\binom{n}{k}`, `\sqrt[3]{x}`,
+  // `\overline{n}_\gamma`, `\sigma_T`, `\dot{n}`. Two-arg commands like
+  // \frac are now a single recall token (was just `\frac{a}` before).
+  // Flat-brace contents only — nested braces give a truncated match that
+  // gets filtered by the balance check below.
+  String.raw`\\[a-zA-Z@]+(?:\[[^\]]*\])?(?:\{[^{}]*\})*(?:[_^](?:\\[a-zA-Z@]+|\{[^{}]*\}|[A-Za-z0-9]))?` + "|" +
   // identifier_{subscript} / identifier^{superscript}: `n_{HI}`, `M^{14}`
   String.raw`[A-Za-z][A-Za-z0-9]*[_^]\{[^{}]+\}` + "|" +
   // identifier_letter / identifier^letter (short): `n_e`, `M^2`
