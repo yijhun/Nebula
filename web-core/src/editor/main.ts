@@ -11,6 +11,7 @@ import {
   EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from "@codemirror/search";
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { markdown } from "@codemirror/lang-markdown";
@@ -552,7 +553,7 @@ function boot(): void {
   view = new EditorView({
     parent,
     state: EditorState.create({
-      doc: "# 歡迎使用 Notepro\n\n左邊輸入 **Markdown**，右邊即時預覽。⌘E 匯出 PDF。\n\n- [ ] 待辦\n- [x] 完成\n\n行內公式 $E = mc^2$。\n",
+      doc: "# 歡迎使用 Nebula\n\n左邊輸入 **Markdown**，右邊即時預覽。⌘E 匯出 PDF。\n\n- [ ] 待辦\n- [x] 完成\n\n行內公式 $E = mc^2$。\n",
       extensions: [
         vimCompartment.of([]),           // Vim mode (toggled via settings) — highest precedence
         lineNumbers(), highlightActiveLine(), drawSelection(),
@@ -560,9 +561,17 @@ function boot(): void {
         search({ top: true }), highlightSelectionMatches(),
         lintGutter(), latexLinter,
         latexAutocomplete,
+        // Auto-close pairs: built-in handles () [] {} "" '' (also skips/deletes
+        // smartly). Extra pairs ($$ for inline math, $$ display math, single
+        // backtick for inline code) are added via languageData below.
+        closeBrackets(),
+        EditorState.languageData.of(() => [{
+          closeBrackets: { brackets: ["(", "[", "{", "\"", "'", "$", "`"] },
+        }]),
         keymap.of([
           { key: "Mod-k", run: (v) => { openAI(v); return true; } },
           { key: "Mod-Shift-k", run: () => { openCite((k) => api.insertCitation(k)); return true; } },
+          ...closeBracketsKeymap,
           ...searchKeymap, ...foldKeymap, ...defaultKeymap, ...historyKeymap,
         ]),
         langCompartment.of(markdownExtensions),

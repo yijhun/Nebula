@@ -23,6 +23,9 @@ targets:
     platform: macOS
     sources:
       - path: Notepro    # the source folder name is unchanged
+      - path: Notepro/AppIcon.icns
+        type: file
+        buildPhase: resources
     postBuildScripts:
       # Embed the self-contained editor bundle (run `vite build` first).
       # Out-of-tree single-file resources are unreliable via the resources list,
@@ -43,6 +46,7 @@ targets:
       path: Notepro/Info.plist
       properties:
         CFBundleDisplayName: Nebula
+        CFBundleIconFile: AppIcon
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
