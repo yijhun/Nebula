@@ -78,7 +78,14 @@ function scanUnmatched(doc: string, mode: Mode): number[] {
     }
   }
 
-  // Pass 2: $ balance (line-scoped for single $; document-scoped for $$)
+  // Pass 2: $ balance (line-scoped for single $; document-scoped for $$).
+  // Subtleties:
+  //   • `$x$$y$` — the middle `$$` is two adjacent inline boundaries, NOT a
+  //     display delimiter. Close the open inline at the first $ and reopen
+  //     at the second, matching how KaTeX/MathJax/Pandoc parse it.
+  //   • `$$` alone (auto-pair empty / cursor mid-pair) — looks like an
+  //     unclosed display open, but flagging it would paint red on every
+  //     keystroke. Only flag if there's any non-whitespace content after.
   let inInline = -1;       // -1 = not in, else = open-$ offset
   let inDisplay = -1;
   for (let i = 0; i < len; i++) {
@@ -86,7 +93,6 @@ function scanUnmatched(doc: string, mode: Mode): number[] {
     const c = doc[i];
     if (c === "\\") { i++; continue; }
     if (c === "\n") {
-      // unclosed inline math doesn't cross lines
       if (inInline !== -1 && inDisplay === -1) { out.push(inInline); inInline = -1; }
       continue;
     }
@@ -95,7 +101,8 @@ function scanUnmatched(doc: string, mode: Mode): number[] {
       if (inDisplay !== -1) {
         if (dbl) { inDisplay = -1; i++; }
       } else if (inInline !== -1) {
-        if (!dbl) inInline = -1;
+        if (dbl) { inInline = i + 1; i++; }  // close at first $, reopen at second
+        else inInline = -1;
       } else if (dbl) {
         inDisplay = i; i++;
       } else {
@@ -104,7 +111,15 @@ function scanUnmatched(doc: string, mode: Mode): number[] {
     }
   }
   if (inInline !== -1) out.push(inInline);
-  if (inDisplay !== -1) { out.push(inDisplay); out.push(inDisplay + 1); }
+  if (inDisplay !== -1) {
+    // Empty `$$` (no content yet) — silent. Otherwise flag both opening $.
+    let hasContent = false;
+    for (let j = inDisplay + 2; j < len; j++) {
+      if (skip[j]) continue;
+      if (doc[j] !== " " && doc[j] !== "\t" && doc[j] !== "\n") { hasContent = true; break; }
+    }
+    if (hasContent) { out.push(inDisplay); out.push(inDisplay + 1); }
+  }
 
   // Pass 3: paired brackets (LaTeX mode only — Markdown prose has too many
   // legitimate stray braces in non-code contexts to flag safely).
