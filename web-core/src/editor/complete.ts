@@ -349,8 +349,85 @@ function latexComplete(context: CompletionContext): CompletionResult | null {
   return { from: before.from, options: [...custom, ...OPTIONS], validFor: /^\\[a-zA-Z@]*$/ };
 }
 
+// ─── Same-document recall (IDE-style "variable" autocomplete) ─────────────
+//
+// Scans the active document for "interesting tokens" — LaTeX commands and
+// subscripted/superscripted identifiers like `n_{HI}`, `r_{disk}`, `\sigma_T`,
+// `M^{14}C`. Builds a frequency table, then completes the user's prefix from
+// it (ranked by how often the token appears). Caches the table per-doc so
+// every keystroke doesn't re-scan a long document.
+
+interface DocToken { text: string; count: number }
+let cachedDoc = "";
+let cachedTokens: DocToken[] = [];
+const TOKEN_RE = new RegExp(
+  // \command optionally followed by _{…} / ^{…} / _letter / ^letter:
+  // captures `\frac`, `\sigma_T`, `\sigma_{ij}`, `\underbrace`, `\dot{n}` (\dot only).
+  String.raw`\\[a-zA-Z@]+(?:[_^](?:\{[^}]+\}|[A-Za-z0-9]))?` + "|" +
+  // identifier_{subscript} / identifier^{superscript}: `n_{HI}`, `M^{14}`
+  String.raw`[A-Za-z][A-Za-z0-9]*[_^]\{[^}]+\}` + "|" +
+  // identifier_letter / identifier^letter (short): `n_e`, `M^2`
+  String.raw`[A-Za-z][A-Za-z0-9]*[_^][A-Za-z0-9]`,
+  "g",
+);
+
+/** Map of tokens that the built-in OPTIONS list already covers — don't
+ * re-show them via doc recall (would create duplicate completions). */
+const BUILT_IN_LABELS = new Set<string>();
+
+function tokensIn(doc: string): DocToken[] {
+  if (doc === cachedDoc) return cachedTokens;
+  const freq = new Map<string, number>();
+  let m: RegExpExecArray | null;
+  TOKEN_RE.lastIndex = 0;
+  while ((m = TOKEN_RE.exec(doc))) {
+    const tok = m[0];
+    // Skip plain `\command` already covered by the built-in list — only the
+    // composite forms (`\sigma_T`, `n_{HI}`) are unique enough to be useful.
+    if (tok.startsWith("\\") && BUILT_IN_LABELS.has(tok)) continue;
+    freq.set(tok, (freq.get(tok) ?? 0) + 1);
+  }
+  cachedDoc = doc;
+  cachedTokens = [...freq.entries()].map(([text, count]) => ({ text, count }));
+  return cachedTokens;
+}
+
+/** Inline IDE-style recall: prefix-match the cursor's word against the
+ * document's previously-seen tokens. Triggers on `\` (LaTeX) and on plain
+ * identifiers — but only with at least 2 chars (or explicit ⌃Space). */
+function docTokenComplete(context: CompletionContext): CompletionResult | null {
+  // Match the current word: a backslash command OR a plain ident chain
+  // (letter then letters/digits/_/^/{}). The trailing `{…}` lets us match
+  // mid-subscript like `n_{H`.
+  const before = context.matchBefore(/(?:\\[a-zA-Z@]*|[A-Za-z][A-Za-z0-9]*(?:[_^](?:\{[^}]*}?)?)?)/);
+  if (!before) return null;
+  const partial = before.text;
+  if (partial.length < 2 && !context.explicit) return null;
+  const doc = context.state.doc.toString();
+  const tokens = tokensIn(doc);
+  const matches = tokens
+    .filter((t) => t.text !== partial && t.text.startsWith(partial))
+    .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text))
+    .slice(0, 20);
+  if (!matches.length) return null;
+  return {
+    from: before.from,
+    options: matches.map((t) => ({
+      label: t.text,
+      detail: `${t.count}× in note`,
+      type: "variable",
+      apply: t.text,
+      boost: Math.min(t.count, 50),     // higher count → ranked higher
+    })),
+    validFor: /^[\\A-Za-z][A-Za-z0-9_^{}]*$/,
+  };
+}
+
+// Populate the built-in-label set once (after OPTIONS is defined).
+for (const c of OPTIONS) if (typeof c.label === "string") BUILT_IN_LABELS.add(c.label);
+
 /** Autocomplete extension + Tab-to-accept (falls back to inserting a tab). */
 export const latexAutocomplete = [
-  autocompletion({ override: [citeKeyComplete, refComplete, wikiLinkComplete, slashComplete, latexComplete], icons: false, activateOnTyping: true }),
+  autocompletion({ override: [citeKeyComplete, refComplete, wikiLinkComplete, slashComplete, docTokenComplete, latexComplete], icons: false, activateOnTyping: true }),
   keymap.of([{ key: "Tab", run: (v) => acceptCompletion(v) || insertTab(v) }]),
 ];
