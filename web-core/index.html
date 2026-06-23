@@ -82,10 +82,14 @@
         border-radius: 2px;
         font-weight: 700;
       }
+      /* cm-nonmatchingBracket is built-in CodeMirror behavior driven by the
+         language's syntax tree, which doesn't recognize LaTeX braces inside
+         Markdown $$…$$ blocks — so left as-is it false-flags every { in math.
+         The always-on `unmatchedBrackets` plugin handles the real red-flag
+         case across both modes, so we explicitly clear this style. */
       .cm-nonmatchingBracket, .cm-nonmatchingBracket * {
-        color: #dc2626 !important;
-        background: rgba(220, 38, 38, 0.18);
-        border-radius: 2px;
+        color: inherit !important;
+        background: transparent !important;
       }
       .cm-editor.cm-focused .cm-matchingBracket { outline: 1px solid rgba(37, 99, 235, 0.55); }
       /* Unmatched brackets / dollar signs — always-on, instant red flag. */

@@ -33,41 +33,182 @@ const ENVIRONMENTS = [
 ];
 
 const SYMBOLS = [
-  "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
-  "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma",
-  "tau", "phi", "chi", "psi", "omega",
-  "Gamma", "Delta", "Theta", "Lambda", "Pi", "Sigma", "Phi", "Psi", "Omega",
-  "sum", "prod", "int", "iint", "oint", "partial", "nabla", "infty",
-  "cdot", "times", "div", "pm", "mp", "approx", "neq", "leq", "geq",
-  "ll", "gg", "equiv", "propto", "rightarrow", "Rightarrow", "leftarrow",
-  "Leftarrow", "leftrightarrow", "mapsto", "forall", "exists", "nexists",
-  "in", "notin", "subset", "subseteq", "supset", "cup", "cap", "emptyset",
-  "langle", "rangle", "hbar", "ell", "Re", "Im",
+  // Greek (lowercase + uppercase variants)
+  "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta",
+  "theta", "vartheta", "iota", "kappa", "lambda", "mu", "nu", "xi",
+  "pi", "varpi", "rho", "varrho", "sigma", "varsigma", "tau", "upsilon",
+  "phi", "varphi", "chi", "psi", "omega",
+  "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon",
+  "Phi", "Psi", "Omega",
+  // Big operators
+  "sum", "prod", "coprod", "int", "iint", "iiint", "oint", "oiint",
+  "bigcup", "bigcap", "bigsqcup", "biguplus", "bigvee", "bigwedge",
+  "bigoplus", "bigotimes", "bigodot",
+  // Calculus / analysis
+  "partial", "nabla", "infty", "Re", "Im", "hbar", "ell", "imath", "jmath",
+  // Binary operators
+  "cdot", "times", "div", "pm", "mp", "ast", "star", "circ", "bullet",
+  "oplus", "ominus", "otimes", "oslash", "odot", "dagger", "ddagger",
+  "wedge", "vee", "cap", "cup", "setminus", "amalg", "uplus",
+  // Relations
+  "approx", "neq", "leq", "geq", "ll", "gg", "equiv", "propto",
+  "sim", "simeq", "cong", "asymp", "perp", "parallel", "mid",
+  "doteq", "succ", "prec", "succeq", "preceq", "models",
+  // Arrows
+  "rightarrow", "Rightarrow", "leftarrow", "Leftarrow", "leftrightarrow",
+  "Leftrightarrow", "longrightarrow", "Longrightarrow", "longleftarrow",
+  "Longleftarrow", "mapsto", "longmapsto", "hookrightarrow", "hookleftarrow",
+  "rightharpoonup", "leftharpoonup", "rightleftharpoons",
+  "uparrow", "downarrow", "updownarrow", "Uparrow", "Downarrow", "Updownarrow",
+  "nearrow", "nwarrow", "searrow", "swarrow", "to", "gets",
+  // Logic / sets
+  "forall", "exists", "nexists", "land", "lor", "lnot", "neg",
+  "in", "notin", "ni", "subset", "subseteq", "supset", "supseteq",
+  "emptyset", "varnothing", "complement", "implies", "impliedby", "iff",
+  // Delimiters
+  "langle", "rangle", "lfloor", "rfloor", "lceil", "rceil", "backslash",
+  // Astronomy / physics shortcuts (siunitx/aastex commonly available)
+  "odot",  // also Sun symbol
+  // Spacing helpers
+  "quad", "qquad",
+  // Functions (use snippet form below; these are constants without args)
+  "ldots", "cdots", "vdots", "ddots", "dots",
+];
+
+/** Math operators that should NOT have a `\` prefix in label but otherwise
+ * behave like SYMBOLS. */
+const OPERATORS = [
+  "sin", "cos", "tan", "csc", "sec", "cot",
+  "arcsin", "arccos", "arctan",
+  "sinh", "cosh", "tanh", "coth",
+  "log", "ln", "lg", "exp",
+  "lim", "limsup", "liminf",
+  "min", "max", "sup", "inf", "arg",
+  "det", "deg", "dim", "ker", "hom",
+  "gcd", "Pr",
+  "bmod", "pmod",
 ];
 
 const OPTIONS: Completion[] = [
+  // ────── environments ──────
   ...ENVIRONMENTS.map((env) =>
     snip(`\\begin{${env}}\n\t\${}\n\\end{${env}}`, `\\begin{${env}}`, "environment"),
   ),
   snip("\\begin{${env}}\n\t${}\n\\end{${env}}", "\\begin{…}", "custom environment"),
+  // ────── sectioning ──────
+  snip("\\part{${}}", "\\part", "part"),
+  snip("\\chapter{${}}", "\\chapter", "chapter"),
   snip("\\section{${}}", "\\section", "section"),
   snip("\\subsection{${}}", "\\subsection", "subsection"),
   snip("\\subsubsection{${}}", "\\subsubsection", "subsubsection"),
+  snip("\\paragraph{${}}", "\\paragraph", "paragraph"),
+  snip("\\subparagraph{${}}", "\\subparagraph", "subparagraph"),
+  // ────── document meta ──────
+  snip("\\title{${}}", "\\title", "title"),
+  snip("\\author{${}}", "\\author", "author"),
+  snip("\\date{${}}", "\\date", "date"),
+  { label: "\\maketitle", type: "keyword", apply: "\\maketitle" },
+  { label: "\\tableofcontents", type: "keyword", apply: "\\tableofcontents" },
+  // ────── text styling ──────
   snip("\\textbf{${}}", "\\textbf", "bold"),
   snip("\\textit{${}}", "\\textit", "italic"),
+  snip("\\textsc{${}}", "\\textsc", "small caps"),
+  snip("\\texttt{${}}", "\\texttt", "monospace"),
+  snip("\\textsf{${}}", "\\textsf", "sans-serif"),
+  snip("\\underline{${}}", "\\underline", "underline"),
   snip("\\emph{${}}", "\\emph", "emphasis"),
+  snip("\\text{${}}", "\\text", "text in math"),
+  // ────── math fonts ──────
+  snip("\\mathrm{${}}", "\\mathrm", "roman"),
+  snip("\\mathbf{${}}", "\\mathbf", "bold"),
+  snip("\\mathbb{${}}", "\\mathbb", "blackboard bold"),
+  snip("\\mathcal{${}}", "\\mathcal", "calligraphic"),
+  snip("\\mathscr{${}}", "\\mathscr", "script"),
+  snip("\\mathfrak{${}}", "\\mathfrak", "fraktur"),
+  snip("\\mathit{${}}", "\\mathit", "italic"),
+  snip("\\mathsf{${}}", "\\mathsf", "sans-serif"),
+  snip("\\mathtt{${}}", "\\mathtt", "monospace"),
+  snip("\\boldsymbol{${}}", "\\boldsymbol", "bold symbol"),
+  snip("\\operatorname{${}}", "\\operatorname", "custom operator"),
+  // ────── fractions / roots / structure ──────
+  snip("\\frac{${num}}{${den}}", "\\frac", "fraction"),
+  snip("\\dfrac{${num}}{${den}}", "\\dfrac", "display fraction"),
+  snip("\\tfrac{${num}}{${den}}", "\\tfrac", "text fraction"),
+  snip("\\binom{${n}}{${k}}", "\\binom", "binomial"),
+  snip("\\dbinom{${n}}{${k}}", "\\dbinom", "display binomial"),
+  snip("\\sqrt{${}}", "\\sqrt", "square root"),
+  snip("\\sqrt[${n}]{${}}", "\\sqrt[n]", "nth root"),
+  snip("\\stackrel{${top}}{${bot}}", "\\stackrel", "stack"),
+  // ────── accents / decorations ──────
+  snip("\\hat{${}}", "\\hat", "hat"),
+  snip("\\widehat{${}}", "\\widehat", "wide hat"),
+  snip("\\tilde{${}}", "\\tilde", "tilde"),
+  snip("\\widetilde{${}}", "\\widetilde", "wide tilde"),
+  snip("\\bar{${}}", "\\bar", "bar"),
+  snip("\\overline{${}}", "\\overline", "overline"),
+  snip("\\vec{${}}", "\\vec", "vector"),
+  snip("\\dot{${}}", "\\dot", "dot"),
+  snip("\\ddot{${}}", "\\ddot", "double dot"),
+  snip("\\acute{${}}", "\\acute", "acute"),
+  snip("\\grave{${}}", "\\grave", "grave"),
+  snip("\\check{${}}", "\\check", "check"),
+  snip("\\breve{${}}", "\\breve", "breve"),
+  snip("\\overbrace{${}}^{${label}}", "\\overbrace", "overbrace"),
+  snip("\\underbrace{${}}_{${label}}", "\\underbrace", "underbrace"),
+  snip("\\overrightarrow{${}}", "\\overrightarrow", "right arrow over"),
+  snip("\\overleftarrow{${}}", "\\overleftarrow", "left arrow over"),
+  snip("\\overset{${top}}{${base}}", "\\overset", "set over"),
+  snip("\\underset{${bot}}{${base}}", "\\underset", "set under"),
+  // ────── delimiters ──────
+  snip("\\left(${}\\right)", "\\left( … \\right)", "auto-size ()"),
+  snip("\\left[${}\\right]", "\\left[ … \\right]", "auto-size []"),
+  snip("\\left\\{${}\\right\\}", "\\left\\{ … \\right\\}", "auto-size {}"),
+  snip("\\left|${}\\right|", "\\left| … \\right|", "auto-size ||"),
+  snip("\\left\\|${}\\right\\|", "\\left\\| … \\right\\|", "auto-size ‖‖"),
+  { label: "\\big", type: "keyword", apply: "\\big" },
+  { label: "\\Big", type: "keyword", apply: "\\Big" },
+  { label: "\\bigg", type: "keyword", apply: "\\bigg" },
+  { label: "\\Bigg", type: "keyword", apply: "\\Bigg" },
+  // ────── citations / references ──────
   snip("\\cite{${}}", "\\cite", "citation"),
-  snip("\\autocite{${}}", "\\autocite", "citation"),
+  snip("\\citep{${}}", "\\citep", "paren citation (natbib)"),
+  snip("\\citet{${}}", "\\citet", "textual citation (natbib)"),
+  snip("\\citeauthor{${}}", "\\citeauthor", "author only"),
+  snip("\\citeyear{${}}", "\\citeyear", "year only"),
+  snip("\\autocite{${}}", "\\autocite", "citation (biblatex)"),
+  snip("\\textcite{${}}", "\\textcite", "textual cite (biblatex)"),
   snip("\\ref{${}}", "\\ref", "reference"),
   snip("\\eqref{${}}", "\\eqref", "equation ref"),
+  snip("\\pageref{${}}", "\\pageref", "page ref"),
+  snip("\\cref{${}}", "\\cref", "cleveref"),
+  snip("\\Cref{${}}", "\\Cref", "cleveref capitalized"),
   snip("\\label{${}}", "\\label", "label"),
   snip("\\footnote{${}}", "\\footnote", "footnote"),
-  snip("\\frac{${num}}{${den}}", "\\frac", "fraction"),
-  snip("\\sqrt{${}}", "\\sqrt", "square root"),
-  snip("\\hat{${}}", "\\hat", "hat"),
-  snip("\\vec{${}}", "\\vec", "vector"),
+  snip("\\bibliography{${references}}", "\\bibliography", "bib file"),
+  snip("\\bibliographystyle{${style}}", "\\bibliographystyle", "bib style"),
+  // ────── figures / tables ──────
   snip("\\includegraphics[width=\\linewidth]{${}}", "\\includegraphics", "image"),
-  snip("\\item ", "\\item", "list item"),
+  snip("\\caption{${}}", "\\caption", "caption"),
+  { label: "\\centering", type: "keyword", apply: "\\centering" },
+  { label: "\\hline", type: "keyword", apply: "\\hline" },
+  { label: "\\toprule", type: "keyword", apply: "\\toprule" },
+  { label: "\\midrule", type: "keyword", apply: "\\midrule" },
+  { label: "\\bottomrule", type: "keyword", apply: "\\bottomrule" },
+  snip("\\multicolumn{${n}}{${align}}{${}}", "\\multicolumn", "multi-column cell"),
+  snip("\\multirow{${n}}{${width}}{${}}", "\\multirow", "multi-row cell"),
+  // ────── spacing ──────
+  { label: "\\quad", type: "keyword", apply: "\\quad" },
+  { label: "\\qquad", type: "keyword", apply: "\\qquad" },
+  { label: "\\,", type: "keyword", apply: "\\," , detail: "thin space" },
+  { label: "\\;", type: "keyword", apply: "\\;", detail: "thick space" },
+  { label: "\\:", type: "keyword", apply: "\\:", detail: "medium space" },
+  { label: "\\!", type: "keyword", apply: "\\!", detail: "negative thin space" },
+  { label: "\\\\", type: "keyword", apply: "\\\\", detail: "line break" },
+  // ────── list ──────
+  snip("\\item ${}", "\\item", "list item"),
+  // ────── math operators (auto-prefix \) ──────
+  ...OPERATORS.map((s) => ({ label: `\\${s}`, type: "function", apply: `\\${s}`, detail: "math operator" }) as Completion),
+  // ────── symbols / arrows / Greek (auto-prefix \) ──────
   ...SYMBOLS.map((s) => ({ label: `\\${s}`, type: "constant", apply: `\\${s}` }) as Completion),
 ];
 
