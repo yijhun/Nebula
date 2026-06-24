@@ -50,35 +50,49 @@ enum ZoteroService {
     }
 
     /// Search the library; returns items with citekeys (main-thread completion).
+    /// Tries local Better BibTeX first; if Zotero isn't running, falls back to
+    /// the Zotero Web API (when a userID + API key are configured).
     static func search(_ query: String, completion: @escaping ([ZoteroItem]) -> Void) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard enabled, !q.isEmpty else { DispatchQueue.main.async { completion([]) }; return }
         rpc("item.search", [q]) { result in
-            var items: [ZoteroItem] = []
-            if case .success(let r) = result, let arr = r as? [[String: Any]] {
-                for it in arr {
-                    let ck = (it["citekey"] as? String) ?? (it["citation-key"] as? String) ?? ""
-                    guard !ck.isEmpty else { continue }
-                    items.append(ZoteroItem(
-                        citekey: ck,
-                        title: it["title"] as? String ?? ck,
-                        authors: authorString(it["author"]),
-                        year: yearString(it["issued"])
-                    ))
+            switch result {
+            case .success(let r):
+                var items: [ZoteroItem] = []
+                if let arr = r as? [[String: Any]] {
+                    for it in arr {
+                        let ck = (it["citekey"] as? String) ?? (it["citation-key"] as? String) ?? ""
+                        guard !ck.isEmpty else { continue }
+                        items.append(ZoteroItem(
+                            citekey: ck,
+                            title: it["title"] as? String ?? ck,
+                            authors: authorString(it["author"]),
+                            year: yearString(it["issued"])
+                        ))
+                    }
                 }
+                DispatchQueue.main.async { completion(items) }
+            case .failure:
+                // Zotero not running → try the cloud API.
+                if ZoteroWeb.available { ZoteroWeb.search(q, completion: completion) }
+                else { DispatchQueue.main.async { completion([]) } }
             }
-            DispatchQueue.main.async { completion(items) }
         }
     }
 
-    /// Export the given citekeys as biblatex (only those entries).
+    /// Export the given citekeys as biblatex (only those entries). Local BBT
+    /// first; Web API fallback when Zotero is closed.
     static func exportBib(_ citekeys: [String], completion: @escaping (String) -> Void) {
         let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
         guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion("") }; return }
         rpc("item.export", [keys, "biblatex"]) { result in
-            var bib = ""
-            if case .success(let r) = result { bib = (r as? String) ?? "" }
-            DispatchQueue.main.async { completion(bib) }
+            switch result {
+            case .success(let r):
+                DispatchQueue.main.async { completion((r as? String) ?? "") }
+            case .failure:
+                if ZoteroWeb.available { ZoteroWeb.exportBib(keys, completion: completion) }
+                else { DispatchQueue.main.async { completion("") } }
+            }
         }
     }
 

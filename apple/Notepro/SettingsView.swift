@@ -51,6 +51,8 @@ struct SettingsView: View {
     @AppStorage("checkBeforeCompile") private var checkBeforeCompile = true
     @AppStorage("whisperModel") private var whisperModel = ""
     @AppStorage("adsToken") private var adsToken = ""
+    @AppStorage("zoteroUserID") private var zoteroUserID = ""
+    @AppStorage("zoteroAPIKey") private var zoteroAPIKey = ""
     // Dropped-image (attachment) location: "folder" (<vault>/<name>), "note"
     // (same folder as the note), or "root" (vault root).
     @AppStorage("attachmentMode") private var attachmentMode = "folder"
@@ -224,7 +226,14 @@ struct SettingsView: View {
 
             Form {
                 Toggle("啟用 Zotero 自動引用與 .bib", isOn: $zoteroEnabled)
-                Text("需 Zotero 開著並安裝 Better BibTeX。").font(.caption).foregroundStyle(.secondary)
+                Text("優先用本機 Better BibTeX（需 Zotero 開著）。下面填了 Web API 後，Zotero 沒開時會自動改用雲端。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Divider()
+                Text("Zotero Web API（離線後備）").font(.caption).bold()
+                TextField("使用者 ID（數字）", text: $zoteroUserID)
+                SecureField("API Key", text: $zoteroAPIKey)
+                Text("申請：zotero.org/settings/keys（建新 key，勾「Allow library access」）。User ID 在同一頁。填了之後 Zotero 不用開也能搜尋/產生 .bib。")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             .padding().tabItem { Label(LZ("Zotero"), systemImage: "books.vertical") }
 
