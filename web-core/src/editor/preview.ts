@@ -137,8 +137,15 @@ function remarkLatexEnvironments() {
   return (tree: Root) => {
     visit(tree, "text", (node: Text, index, parent) => {
       if (!parent || index == null) return;
+      // Inherit the parent text node's source position so `rehypeSourceLines`
+      // can assign `data-line` and the preview's dblclick-to-jump finds it.
+      // Without this, `$$…$$` blocks come in via placeholder substitution
+      // and end up with no position → no data-line → dblclick is silent.
+      const pos = node.position;
       const parts = splitOnLatexPlaceholders(node.value, currentBlocks, (b) =>
-        b.display ? mathNode(b.raw) : ({ type: "inlineCode", value: b.raw } as unknown as Record<string, unknown>),
+        b.display
+          ? { ...mathNode(b.raw), position: pos }
+          : ({ type: "inlineCode", value: b.raw, position: pos } as unknown as Record<string, unknown>),
       );
       if (!parts) return;
       parent.children.splice(index, 1, ...(parts as Text[]));

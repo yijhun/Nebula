@@ -263,6 +263,9 @@ const api = {
   getContent(): string {
     return view.state.doc.toString();
   },
+  /** Jump the editor's cursor to a 1-indexed line and scroll it into view —
+   * used by SyncTeX reverse (PDF click → editor) from the native shell. */
+  jumpToLine(line: number): void { jumpEditorToLine(line); },
   /** Currently selected text (empty if there's no selection). */
   getSelection(): string {
     const { from, to } = view.state.selection.main;
@@ -606,10 +609,12 @@ function boot(): void {
       postToHost({ type: "dirty" });
       scheduleRender();
       pushOutline();
-    } else if (u.selectionSet && mode === "markdown") {
-      // Cursor moved (click / arrows) → align the preview to the same line.
+    } else if (u.selectionSet) {
       const line = u.state.doc.lineAt(u.state.selection.main.head).number;
-      syncPreviewToLine(line);
+      if (mode === "markdown") syncPreviewToLine(line);
+      // SyncTeX forward — the native shell calls `synctex view` to find the
+      // PDF page+coord for this line and scrolls the live PDF preview.
+      postToHost({ type: "cursorLine", line });
     }
   });
 

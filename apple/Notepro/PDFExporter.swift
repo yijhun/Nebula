@@ -101,9 +101,12 @@ enum PDFExporter {
         do {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tectonic)
+            // --synctex produces <stem>.synctex.gz alongside the PDF, used by
+            // the SyncTeX helper to map editor lines ⇄ PDF coords. Cheap (~5%
+            // overhead) and harmless when SyncTeX isn't installed.
             process.arguments = quick
-                ? ["--reruns", "0", "--keep-intermediates", texName]
-                : [texName]
+                ? ["--reruns", "0", "--keep-intermediates", "--synctex", texName]
+                : ["--synctex", texName]
             process.currentDirectoryURL = dir
             let pipe = Pipe()
             process.standardOutput = pipe

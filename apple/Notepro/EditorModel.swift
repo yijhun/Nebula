@@ -97,6 +97,64 @@ final class EditorModel: ObservableObject, Identifiable {
     private var webReady = false
     private var previewWork: DispatchWorkItem?
 
+    /// SyncTeX forward target: which PDF page + box to highlight when the
+    /// editor's cursor moves. `version` ticks every push so the PDFPreview
+    /// re-scrolls even when the cursor revisits the same line. `nil` means
+    /// no target / clear the highlight.
+    struct SyncTarget: Equatable {
+        var page: Int
+        var rect: CGRect    // PDF point coords, top-left origin
+        var version: Int
+    }
+    @Published var syncTarget: SyncTarget?
+
+    private var syncTexWork: DispatchWorkItem?
+
+    private func runSyncTeXForward(line: Int) {
+        // Throttle: cursor moves can fire 60+/s while scrolling; coalesce to a
+        // single call per ~150ms.
+        syncTexWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let pdf = self.previewPDF, let src = self.syncTeXSourceURL() else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let r = SyncTeX.forward(line: line, source: src, pdf: pdf) else { return }
+                DispatchQueue.main.async {
+                    let next = (self.syncTarget?.version ?? 0) + 1
+                    self.syncTarget = SyncTarget(
+                        page: r.page,
+                        rect: CGRect(x: r.x, y: r.y, width: max(r.width, 50), height: max(r.height, 12)),
+                        version: next)
+                }
+            }
+        }
+        syncTexWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// SyncTeX reverse: the user clicked at (page, x, y) in the PDF preview —
+    /// look up the matching source line and jump the editor there.
+    func runSyncTeXReverse(page: Int, x: CGFloat, y: CGFloat) {
+        guard let pdf = previewPDF, let _ = syncTeXSourceURL() else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let r = SyncTeX.reverse(pdf: pdf, page: page, x: x, y: y) else { return }
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.notepro.jumpToLine(\(r.line))")
+            }
+        }
+    }
+
+    /// The .tex file that synctex resolved against. For .tex docs it's the
+    /// file on disk; for Markdown drafts it's the hidden `.notepro-preview.tex`
+    /// that `compileLatexPreview` writes alongside the note.
+    private func syncTeXSourceURL() -> URL? {
+        guard let cur = currentURL else { return nil }
+        if docMode == .latex { return cur }
+        let dir = cur.deletingLastPathComponent()
+        let candidate = dir.appendingPathComponent(".notepro-preview.tex")
+        return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+    }
+
     /// Toggle to show the compiled-PDF live preview alongside a Markdown note —
     /// the Overleaf-style "right pane shows the rendered paper as you draft."
     /// LaTeX mode has it implicitly via split/preview view modes; this flag
@@ -308,6 +366,11 @@ final class EditorModel: ObservableObject, Identifiable {
         case "loaded":
             statusText = currentURL?.lastPathComponent ?? "新文件 Untitled"
             refreshProperties()
+        case "cursorLine":
+            // SyncTeX forward — only meaningful when the PDF preview is up.
+            if latexPreviewVisible, let line = body["line"] as? Int {
+                runSyncTeXForward(line: line)
+            }
         default:
             break
         }

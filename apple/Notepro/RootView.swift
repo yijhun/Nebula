@@ -814,7 +814,9 @@ struct EditorPane: View {
                 // LaTeX mode: live compiled-PDF preview (Markdown uses the web
                 // preview inside the editor instead).
                 if editor.latexPreviewVisible {
-                    PDFPreview(url: editor.previewPDF, version: editor.previewVersion)
+                    PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
+                               syncTarget: editor.syncTarget,
+                               onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
                         .frame(minWidth: 280)
                         .overlay(alignment: .topTrailing) {
                             if editor.isCompilingPreview || editor.aiFixing {
