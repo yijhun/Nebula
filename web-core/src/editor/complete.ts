@@ -212,6 +212,72 @@ const OPTIONS: Completion[] = [
   ...SYMBOLS.map((s) => ({ label: `\\${s}`, type: "constant", apply: `\\${s}` }) as Completion),
 ];
 
+// ─── Astronomy friendly aliases ──────────────────────────────────────────
+// Type a memorable `\sun` and accept → it inserts the real LaTeX `\odot`.
+// Covers solar/planetary symbols, common units, ions and lines. Forms are
+// math-mode safe (use inside $…$). `${}` marks a tab stop (snippet).
+const ASTRO: Array<[string, string, string]> = [
+  // symbols
+  ["\\sun", "\\odot", "⊙ Sun"],
+  ["\\earth", "\\oplus", "⊕ Earth"],
+  ["\\msun", "M_\\odot", "solar mass"],
+  ["\\lsun", "L_\\odot", "solar luminosity"],
+  ["\\rsun", "R_\\odot", "solar radius"],
+  ["\\zsun", "Z_\\odot", "solar metallicity"],
+  ["\\tsun", "T_\\odot", "solar temperature"],
+  ["\\mearth", "M_\\oplus", "Earth mass"],
+  ["\\rearth", "R_\\oplus", "Earth radius"],
+  ["\\mjup", "M_{\\rm Jup}", "Jupiter mass"],
+  ["\\rjup", "R_{\\rm Jup}", "Jupiter radius"],
+  // units
+  ["\\kms", "\\mathrm{km\\,s^{-1}}", "km/s"],
+  ["\\cms", "\\mathrm{cm\\,s^{-1}}", "cm/s"],
+  ["\\ms", "\\mathrm{m\\,s^{-1}}", "m/s"],
+  ["\\ergs", "\\mathrm{erg\\,s^{-1}}", "erg/s"],
+  ["\\ergscm", "\\mathrm{erg\\,s^{-1}\\,cm^{-2}}", "flux"],
+  ["\\msunyr", "M_\\odot\\,\\mathrm{yr^{-1}}", "M⊙ / yr"],
+  ["\\gcm", "\\mathrm{g\\,cm^{-3}}", "density g/cm³"],
+  ["\\pc", "\\mathrm{pc}", "parsec"],
+  ["\\kpc", "\\mathrm{kpc}", "kiloparsec"],
+  ["\\mpc", "\\mathrm{Mpc}", "megaparsec"],
+  ["\\au", "\\mathrm{AU}", "astronomical unit"],
+  ["\\jy", "\\mathrm{Jy}", "jansky"],
+  ["\\mjy", "\\mathrm{mJy}", "millijansky"],
+  ["\\dex", "\\mathrm{dex}", "dex"],
+  ["\\degr", "^\\circ", "degree"],
+  ["\\arcsec", "^{\\prime\\prime}", "arcsecond ″"],
+  ["\\arcmin", "^{\\prime}", "arcminute ′"],
+  ["\\micron", "\\mu\\mathrm{m}", "micron"],
+  ["\\angstrom", "\\text{\\AA}", "ångström"],
+  // physical quantities
+  ["\\teff", "T_{\\rm eff}", "effective temperature"],
+  ["\\logg", "\\log g", "surface gravity"],
+  ["\\vlsr", "v_{\\rm LSR}", "LSR velocity"],
+  ["\\vrad", "v_{\\rm rad}", "radial velocity"],
+  ["\\nh", "N_{\\rm H}", "H column density"],
+  ["\\nhtwo", "N(\\mathrm{H_2})", "H₂ column density"],
+  ["\\mdot", "\\dot{M}", "mass accretion/loss rate"],
+  // ions and lines
+  ["\\hi", "\\mathrm{H\\,\\textsc{i}}", "H I"],
+  ["\\hii", "\\mathrm{H\\,\\textsc{ii}}", "H II"],
+  ["\\halpha", "\\mathrm{H\\alpha}", "Hα"],
+  ["\\hbeta", "\\mathrm{H\\beta}", "Hβ"],
+  ["\\lya", "\\mathrm{Ly\\alpha}", "Lyman-α"],
+  ["\\co", "\\mathrm{CO}", "carbon monoxide"],
+  ["\\oiii", "[\\mathrm{O\\,\\textsc{iii}}]", "[O III]"],
+  ["\\nii", "[\\mathrm{N\\,\\textsc{ii}}]", "[N II]"],
+  // notation helpers (snippets with tab stops)
+  ["\\sci", "${}\\times 10^{${}}", "scientific notation"],
+  ["\\ten", "10^{${}}", "power of ten"],
+  ["\\expp", "e^{${}}", "exponential"],
+];
+
+const ASTRO_OPTIONS: Completion[] = ASTRO.map(([trigger, expand, detail]) =>
+  expand.includes("${")
+    ? snip(expand, trigger, `astro · ${detail}`)
+    : ({ label: trigger, type: "constant", detail: `astro · ${detail}`, apply: expand } as Completion),
+);
+
 interface ZItem { citekey: string; title: string; authors: string; year: string; }
 
 // ─── Promote the most-used basic math primitives ────────────────────────
@@ -379,7 +445,7 @@ function latexComplete(context: CompletionContext): CompletionResult | null {
   const custom = getConfig().snippets.map((s) =>
     snip(s.template.replace(/\\n/g, "\n"), s.label, "custom"),
   );
-  return { from: before.from, options: [...custom, ...OPTIONS], validFor: /^\\[a-zA-Z@]*$/ };
+  return { from: before.from, options: [...custom, ...ASTRO_OPTIONS, ...OPTIONS], validFor: /^\\[a-zA-Z@]*$/ };
 }
 
 // ─── Same-document recall (IDE-style "variable" autocomplete) ─────────────
@@ -485,6 +551,7 @@ function docTokenComplete(context: CompletionContext): CompletionResult | null {
 
 // Populate the built-in-label set once (after OPTIONS is defined).
 for (const c of OPTIONS) if (typeof c.label === "string") BUILT_IN_LABELS.add(c.label);
+for (const c of ASTRO_OPTIONS) if (typeof c.label === "string") BUILT_IN_LABELS.add(c.label);
 
 /** Autocomplete extension + Tab-to-accept (falls back to inserting a tab). */
 export const latexAutocomplete = [

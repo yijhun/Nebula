@@ -219,14 +219,8 @@ struct SettingsView: View {
             }
             .padding().tabItem { Label(LZ("AI"), systemImage: "sparkles") }
 
-            Form {
-                Text("自訂 LaTeX 補全片段，每行：「觸發 | 展開」（用 \\n 換行、${} 佔位）").font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $snippetsText)
-                    .font(.system(size: 12, design: .monospaced)).frame(minHeight: 110)
-                    .onChange(of: snippetsText) { _, _ in notifyConfig() }
-                Text("例： \\fig | \\\\begin{figure}\\n\\t${}\\n\\\\end{figure}").font(.caption2).foregroundStyle(.secondary)
-            }
-            .padding().tabItem { Label(LZ("片段"), systemImage: "text.cursor") }
+            SnippetsEditor(text: $snippetsText, onChange: notifyConfig)
+                .padding().tabItem { Label(LZ("片段"), systemImage: "text.cursor") }
 
             Form {
                 Toggle("啟用 Zotero 自動引用與 .bib", isOn: $zoteroEnabled)
@@ -255,6 +249,146 @@ struct SettingsView: View {
             }
             .padding().tabItem { Label(LZ("AI 助手"), systemImage: "wand.and.stars") }
         }
-        .frame(width: 660, height: 400)
+        .frame(width: 680, height: 460)
+    }
+}
+
+/// Snippet management UI — a list editor for LaTeX completion snippets.
+/// Persists to the same `snippetsText` blob ("trigger | template" lines, with
+/// `\n` for literal newlines) the web core already consumes, so it's fully
+/// backward-compatible with the old plain-text field.
+struct SnippetsEditor: View {
+    @Binding var text: String
+    let onChange: () -> Void
+
+    struct Snip: Identifiable, Equatable {
+        let id = UUID()
+        var trigger: String
+        var template: String   // real newlines here; serialized with \n
+    }
+
+    @State private var snips: [Snip] = []
+    @State private var selection: Snip.ID?
+    @FocusState private var templateFocused: Bool
+
+    /// Starter snippets a user can drop in. Templates use real newlines.
+    private static let starters: [(String, String, String)] = [
+        ("圖片 figure", "\\fig",
+         "\\begin{figure}\n\t\\centering\n\t\\includegraphics[width=\\linewidth]{${}}\n\t\\caption{${}}\n\t\\label{fig:${}}\n\\end{figure}"),
+        ("雙欄圖 figure*", "\\figs",
+         "\\begin{figure*}\n\t\\centering\n\t\\includegraphics[width=\\textwidth]{${}}\n\t\\caption{${}}\n\t\\label{fig:${}}\n\\end{figure*}"),
+        ("表格 table", "\\tab",
+         "\\begin{table}\n\t\\centering\n\t\\caption{${}}\n\t\\label{tab:${}}\n\t\\begin{tabular}{${cc}}\n\t\t\\hline\n\t\t${} \\\\\n\t\t\\hline\n\t\\end{tabular}\n\\end{table}"),
+        ("方程式 equation", "\\eq",
+         "\\begin{equation}\n\t${}\n\t\\label{eq:${}}\n\\end{equation}"),
+        ("對齊 align", "\\al",
+         "\\begin{align}\n\t${}\n\\end{align}"),
+        ("觀測參數", "\\obs",
+         "$v_{\\rm LSR} = ${} \\mathrm{km\\,s^{-1}}$, $d = ${} \\mathrm{kpc}$"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("自訂 LaTeX 補全片段。打觸發字按 Tab 展開；`${}` 是游標停留點，多個會用 Tab 依序跳。")
+                .font(.caption).foregroundStyle(.secondary)
+
+            HSplitView {
+                // ── master list ──
+                VStack(spacing: 0) {
+                    List(selection: $selection) {
+                        ForEach(snips) { s in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.trigger.isEmpty ? "（未命名）" : s.trigger)
+                                    .font(.system(size: 12, design: .monospaced)).bold()
+                                Text(s.template.replacingOccurrences(of: "\n", with: " ").prefix(40))
+                                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .tag(s.id)
+                        }
+                        .onDelete { idx in snips.remove(atOffsets: idx); commit() }
+                        .onMove { from, to in snips.move(fromOffsets: from, toOffset: to); commit() }
+                    }
+                    .frame(minHeight: 150)
+                    HStack {
+                        Button { addBlank() } label: { Image(systemName: "plus") }
+                        Button { if let id = selection, let i = snips.firstIndex(where: { $0.id == id }) { snips.remove(at: i); commit() } }
+                            label: { Image(systemName: "minus") }
+                            .disabled(selection == nil)
+                        Spacer()
+                        Menu {
+                            ForEach(Self.starters, id: \.1) { name, trig, tmpl in
+                                Button(name) { add(trigger: trig, template: tmpl) }
+                            }
+                        } label: { Label("常用範本", systemImage: "sparkles") }
+                            .menuStyle(.borderlessButton).fixedSize()
+                    }
+                    .buttonStyle(.borderless).padding(6)
+                }
+                .frame(minWidth: 180)
+
+                // ── detail editor ──
+                if let id = selection, let idx = snips.firstIndex(where: { $0.id == id }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("觸發字").font(.caption).foregroundStyle(.secondary)
+                        TextField("\\mysnippet", text: Binding(
+                            get: { snips[idx].trigger },
+                            set: { snips[idx].trigger = $0; commit() }))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 13, design: .monospaced))
+                        HStack {
+                            Text("展開內容").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("插入 ${ }") { insertTabStop(idx) }
+                                .font(.caption2).buttonStyle(.borderless)
+                        }
+                        TextEditor(text: Binding(
+                            get: { snips[idx].template },
+                            set: { snips[idx].template = $0; commit() }))
+                            .font(.system(size: 12, design: .monospaced))
+                            .focused($templateFocused)
+                            .frame(minHeight: 120)
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
+                    }
+                    .padding(8)
+                    .frame(minWidth: 240)
+                } else {
+                    VStack { Spacer()
+                        Text("選一個片段來編輯，或按 + 新增").foregroundStyle(.secondary).font(.caption)
+                        Spacer() }
+                        .frame(minWidth: 240, maxHeight: .infinity)
+                }
+            }
+        }
+        .onAppear { parse() }
+    }
+
+    // MARK: serialization (round-trips through the existing snippetsText format)
+
+    private func parse() {
+        snips = text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 2 else { return nil }
+            let trig = parts[0].trimmingCharacters(in: .whitespaces)
+            let tmpl = parts[1...].joined(separator: "|").trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "\\n", with: "\n")
+            return trig.isEmpty ? nil : Snip(trigger: trig, template: tmpl)
+        }
+    }
+
+    private func commit() {
+        text = snips.map { s in
+            let tmpl = s.template.replacingOccurrences(of: "\n", with: "\\n")
+            return "\(s.trigger) | \(tmpl)"
+        }.joined(separator: "\n")
+        onChange()
+    }
+
+    private func addBlank() { add(trigger: "\\", template: "") }
+    private func add(trigger: String, template: String) {
+        let s = Snip(trigger: trigger, template: template)
+        snips.append(s); selection = s.id; commit()
+    }
+    private func insertTabStop(_ idx: Int) {
+        snips[idx].template += "${}"; commit()
     }
 }
