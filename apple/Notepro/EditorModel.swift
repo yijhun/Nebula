@@ -97,8 +97,21 @@ final class EditorModel: ObservableObject, Identifiable {
     private var webReady = false
     private var previewWork: DispatchWorkItem?
 
-    /// True when a compiled-PDF preview should be shown (LaTeX mode, not edit-only).
-    var latexPreviewVisible: Bool { docMode == .latex && viewMode != .edit }
+    /// Toggle to show the compiled-PDF live preview alongside a Markdown note —
+    /// the Overleaf-style "right pane shows the rendered paper as you draft."
+    /// LaTeX mode has it implicitly via split/preview view modes; this flag
+    /// brings the same panel into Markdown mode without changing view mode.
+    @Published var pdfPreviewOn: Bool = false {
+        didSet {
+            UserDefaults.standard.set(pdfPreviewOn, forKey: "pdfPreviewOn")
+            if latexPreviewVisible { scheduleLatexPreview() }
+        }
+    }
+
+    /// True when a compiled-PDF preview should be shown.
+    var latexPreviewVisible: Bool {
+        (docMode == .latex && viewMode != .edit) || (docMode == .markdown && pdfPreviewOn)
+    }
 
     static func mode(for url: URL) -> DocMode {
         url.pathExtension.lowercased() == "tex" ? .latex : .markdown
@@ -110,6 +123,7 @@ final class EditorModel: ObservableObject, Identifiable {
     private var noteListObserver: NSObjectProtocol?
     private var noteNamesCache: [String] = []
     init() {
+        pdfPreviewOn = UserDefaults.standard.bool(forKey: "pdfPreviewOn")
         themeObserver = NotificationCenter.default.addObserver(
             forName: .noteproThemeChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.applyTheme() }
@@ -615,11 +629,18 @@ final class EditorModel: ObservableObject, Identifiable {
     }
 
     private func compileLatexPreview() {
-        guard docMode == .latex, let webView else { return }
+        guard let webView else { return }
+        guard docMode == .latex || (docMode == .markdown && pdfPreviewOn) else { return }
         isCompilingPreview = true
-        webView.evaluateJavaScript("window.notepro.getContent()") { [weak self] result, _ in
+        // For Markdown mode we run the in-process md→LaTeX converter first so the
+        // PDF panel shows what the eventual paper will look like, not an HTML
+        // approximation. The conversion is fast (cached MathJax SVGs) and shares
+        // the same compile path as .tex mode below.
+        let js = docMode == .latex
+            ? "window.notepro.getContent()"
+            : "window.notepro.toLatex()"
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
             guard let self else { return }
-            // Wrap fragments so an incomplete .tex still previews.
             let tex = Self.wrapLatexFragment(result as? String ?? "")
             let done: (Result<URL, Error>) -> Void = { [weak self] outcome in
                 guard let self else { return }

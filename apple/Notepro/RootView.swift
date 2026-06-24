@@ -748,6 +748,14 @@ struct EditorPane: View {
                 .pickerStyle(.segmented)
                 .fixedSize()
 
+                if editor.docMode == .markdown {
+                    Toggle(isOn: $editor.pdfPreviewOn) {
+                        Image(systemName: editor.pdfPreviewOn ? "doc.text.fill" : "doc.text")
+                    }
+                    .toggleStyle(.button)
+                    .help(LZ("即時 PDF 預覽 Live PDF preview"))
+                }
+
                 Menu {
                     Button { editor.triggerSemantic() } label: { Label(LZ("問筆記"), systemImage: "brain") }
                     Button { NotificationCenter.default.post(name: .noteproOpenCowork, object: nil) } label: {

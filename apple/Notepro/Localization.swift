@@ -54,6 +54,7 @@ let EN: [String: String] = [
     "屬性 Properties": "Properties", "新增屬性…": "Add property…",
     "快捷鍵 Shortcuts": "Shortcuts", "字": "words", "編譯中": "Compiling",
     "錄演講 / 轉文字": "Record / Transcribe", "找文獻 arXiv/ADS": "Find Papers (arXiv/ADS)",
+    "即時 PDF 預覽 Live PDF preview": "Live PDF preview",
     "與 Claude 共筆": "Cowork with Claude", "範圍": "Scope", "選取": "Selection", "本章節": "This section", "整篇": "Whole note",
     "改寫得更清楚精煉": "Polish for clarity", "審稿/找邏輯漏洞": "Peer review",
     "解釋這個推導/方程式": "Explain this derivation", "摘要(中文)": "Summarize (Chinese)",

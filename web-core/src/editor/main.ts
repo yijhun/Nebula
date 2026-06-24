@@ -555,9 +555,18 @@ function boot(): void {
     if (target) postToHost({ type: "openLink", target });
   });
   // Double click: jump the editor to that block's source line.
+  // MathJax replaces `.math-display`'s children with an SVG inside `<mjx-container>`;
+  // `Element.closest()` on an SVG element doesn't reliably traverse out of the
+  // SVG subtree into the HTML ancestors in WebKit, so a dblclick on a rendered
+  // equation never finds the `data-line` carried by the wrapping HTML div.
+  // composedPath() gives the real bubble path including the HTML ancestors.
   previewEl?.addEventListener("dblclick", (e) => {
-    const lined = (e.target as HTMLElement)?.closest("[data-line]") as HTMLElement | null;
-    if (lined) jumpEditorToLine(Number(lined.getAttribute("data-line")));
+    for (const node of e.composedPath()) {
+      if (node instanceof HTMLElement && node.hasAttribute("data-line")) {
+        jumpEditorToLine(Number(node.getAttribute("data-line")));
+        return;
+      }
+    }
   });
 
   // Smart $ — closeBrackets-style pairing but math-aware:
