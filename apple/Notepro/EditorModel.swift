@@ -379,17 +379,31 @@ final class EditorModel: ObservableObject, Identifiable {
     func renameCurrent(to newBase: String) {
         guard let url = currentURL else { return }
         let trimmed = newBase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let oldBase = url.deletingPathExtension().lastPathComponent
         guard !trimmed.isEmpty,
               !trimmed.contains("/"), !trimmed.hasPrefix("."),
-              trimmed != url.deletingPathExtension().lastPathComponent else { return }
+              trimmed != oldBase else { return }
         let ext = url.pathExtension
         let dest = url.deletingLastPathComponent()
             .appendingPathComponent(ext.isEmpty ? trimmed : "\(trimmed).\(ext)")
-        guard !FileManager.default.fileExists(atPath: dest.path) else {
+        // APFS is case-INSENSITIVE by default — `Foo` → `foo` makes `fileExists`
+        // see the existing source file at `dest` and abort. Detect a pure
+        // case-only rename and route through a temp filename so APFS lets it
+        // through.
+        let isCaseOnlyRename = trimmed.lowercased() == oldBase.lowercased()
+        let fm = FileManager.default
+        if !isCaseOnlyRename, fm.fileExists(atPath: dest.path) {
             statusText = "已有同名檔：\(dest.lastPathComponent)"; return
         }
         do {
-            try FileManager.default.moveItem(at: url, to: dest)
+            if isCaseOnlyRename {
+                let temp = url.deletingLastPathComponent()
+                    .appendingPathComponent(".nebula-rename-\(UUID().uuidString).\(ext)")
+                try fm.moveItem(at: url, to: temp)
+                try fm.moveItem(at: temp, to: dest)
+            } else {
+                try fm.moveItem(at: url, to: dest)
+            }
             currentURL = dest
             displayName = dest.lastPathComponent
             statusText = "已重新命名為 \(dest.lastPathComponent)"
@@ -1002,50 +1016,58 @@ final class EditorModel: ObservableObject, Identifiable {
         panel.prompt = "建立投稿資料夾於此"
         guard panel.runModal() == .OK, let parent = panel.url else { return }
 
-        // Fresh bundle folder "<name> submission".
-        var dest = parent.appendingPathComponent("\(project.name) submission", isDirectory: true)
-        var n = 1
-        while fm.fileExists(atPath: dest.path) { n += 1; dest = parent.appendingPathComponent("\(project.name) submission \(n)", isDirectory: true) }
-        try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        // Run the heavy work (figure copies, file writes, ditto zip) off the
+        // main thread so the UI doesn't freeze on a multi-MB bundle. Snapshot
+        // anything we need from the model before hopping.
+        let projectName = project.name
+        let projectFolder = project.folder.path
+        let projectBuildDir = project.buildDir
+        let vaultPath = vaultRoot?.path ?? ""
+        statusText = "打包中…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            var dest = parent.appendingPathComponent("\(projectName) submission", isDirectory: true)
+            var n = 1
+            while fm.fileExists(atPath: dest.path) { n += 1; dest = parent.appendingPathComponent("\(projectName) submission \(n)", isDirectory: true) }
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
 
-        // Copy each referenced figure flat, rewrite \includegraphics{...} → basename.
-        var figs = 0
-        if let re = try? NSRegularExpression(pattern: #"\\includegraphics(\[[^\]]*\])?\{([^}]+)\}"#) {
-            let ns = tex as NSString
-            var seen = Set<String>()
-            for m in re.matches(in: tex, range: NSRange(location: 0, length: ns.length)).reversed() {
-                let ref = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
-                let base = (ref as NSString).lastPathComponent
-                if !seen.contains(ref) {
-                    seen.insert(ref)
-                    if let src = ImageSchemeHandler.resolve(ref: ref, base: project.folder.path, vault: vaultRoot?.path ?? "") {
-                        let d = dest.appendingPathComponent(base)
-                        if !fm.fileExists(atPath: d.path) { try? fm.copyItem(at: src, to: d); figs += 1 }
+            var figs = 0
+            if let re = try? NSRegularExpression(pattern: #"\\includegraphics(\[[^\]]*\])?\{([^}]+)\}"#) {
+                let ns = tex as NSString
+                var seen = Set<String>()
+                for m in re.matches(in: tex, range: NSRange(location: 0, length: ns.length)).reversed() {
+                    let ref = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+                    let base = (ref as NSString).lastPathComponent
+                    if !seen.contains(ref) {
+                        seen.insert(ref)
+                        if let src = ImageSchemeHandler.resolve(ref: ref, base: projectFolder, vault: vaultPath) {
+                            let d = dest.appendingPathComponent(base)
+                            if !fm.fileExists(atPath: d.path) { try? fm.copyItem(at: src, to: d); figs += 1 }
+                        }
                     }
+                    let opt = m.range(at: 1).location != NSNotFound ? ns.substring(with: m.range(at: 1)) : ""
+                    tex = (tex as NSString).replacingCharacters(in: m.range, with: "\\includegraphics\(opt){\(base)}")
                 }
-                // rewrite this occurrence's path to the flat basename
-                let opt = m.range(at: 1).location != NSNotFound ? ns.substring(with: m.range(at: 1)) : ""
-                tex = (tex as NSString).replacingCharacters(in: m.range, with: "\\includegraphics\(opt){\(base)}")
+            }
+            try? tex.write(to: dest.appendingPathComponent("\(projectName).tex"), atomically: true, encoding: .utf8)
+
+            let bibSrc = projectBuildDir.appendingPathComponent("references.bib")
+            if fm.fileExists(atPath: bibSrc.path) {
+                try? fm.copyItem(at: bibSrc, to: dest.appendingPathComponent("references.bib"))
+            }
+
+            let zip = dest.appendingPathExtension("zip")
+            try? fm.removeItem(at: zip)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            p.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", dest.path, zip.path]
+            try? p.run(); p.waitUntilExit()
+            let zipped = fm.fileExists(atPath: zip.path)
+
+            DispatchQueue.main.async {
+                self.statusText = "已打包投稿檔（tex + bib + \(figs) 張圖\(zipped ? " + zip" : "")）"
+                NSWorkspace.shared.activateFileViewerSelecting([zipped ? zip : dest])
             }
         }
-        try? tex.write(to: dest.appendingPathComponent("\(project.name).tex"), atomically: true, encoding: .utf8)
-
-        // Cited-only references.bib.
-        let bibSrc = project.buildDir.appendingPathComponent("references.bib")
-        if fm.fileExists(atPath: bibSrc.path) {
-            try? fm.copyItem(at: bibSrc, to: dest.appendingPathComponent("references.bib"))
-        }
-
-        // Zip it (ditto keeps the folder as the archive root).
-        let zip = dest.appendingPathExtension("zip")
-        try? fm.removeItem(at: zip)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        p.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", dest.path, zip.path]
-        try? p.run(); p.waitUntilExit()
-
-        statusText = "已打包投稿檔（tex + bib + \(figs) 張圖\(fm.fileExists(atPath: zip.path) ? " + zip" : "")）"
-        NSWorkspace.shared.activateFileViewerSelecting([fm.fileExists(atPath: zip.path) ? zip : dest])
     }
 
     /// Send the LaTeX + last compile error to the local AI, apply the fix, and
@@ -1245,23 +1267,44 @@ final class EditorModel: ObservableObject, Identifiable {
     /// Merge the vault's local `references.bib` (arXiv/ADS imports) into a
     /// Zotero-generated bib so imported `[@keys]` resolve at compile. Dedups by key.
     func mergeLocalLib(_ zotero: String) -> String {
+        // Snapshot vaultRoot at entry — this can be called from Zotero/ffmpeg
+        // background completion handlers, and vaultRoot is non-isolated; read
+        // once so a concurrent main-thread reassignment can't tear the URL.
         guard let root = vaultRoot else { return zotero }
         let local = (try? String(contentsOf: root.appendingPathComponent("references.bib"), encoding: .utf8)) ?? ""
         guard !local.isEmpty else { return zotero }
-        let re = try? NSRegularExpression(pattern: #"@\w+\s*\{\s*([^,\s]+)"#)
+        // (?i) — `@string`/`@comment`/`@preamble` are bib MACROS, not entries;
+        // the entry-detection regex would otherwise treat them like cite keys.
+        let entryRe = try? NSRegularExpression(pattern: #"@(\w+)\s*\{\s*([^,\s]+)"#)
+        let skipTypes: Set<String> = ["string", "comment", "preamble"]
         func keys(_ s: String) -> Set<String> {
-            guard let re else { return [] }
+            guard let entryRe else { return [] }
             let ns = s as NSString
-            return Set(re.matches(in: s, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range(at: 1)) })
+            var out = Set<String>()
+            for m in entryRe.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+                let type = ns.substring(with: m.range(at: 1)).lowercased()
+                if skipTypes.contains(type) { continue }
+                out.insert(ns.substring(with: m.range(at: 2)))
+            }
+            return out
         }
         var have = keys(zotero)
         var out = zotero
         for part in ("\n" + local).components(separatedBy: "\n@").dropFirst() {
             let entry = "@" + part
-            guard let re,
-                  let m = re.firstMatch(in: entry, range: NSRange(location: 0, length: (entry as NSString).length)),
-                  let r = Range(m.range(at: 1), in: entry) else { continue }
-            let k = String(entry[r])
+            guard let entryRe,
+                  let m = entryRe.firstMatch(in: entry, range: NSRange(location: 0, length: (entry as NSString).length)),
+                  let typeR = Range(m.range(at: 1), in: entry),
+                  let keyR = Range(m.range(at: 2), in: entry) else { continue }
+            let type = String(entry[typeR]).lowercased()
+            // Don't dedup macros by their type name (would block real entries
+            // with the same key as the macro type), but DO include them — the
+            // bibtex parser needs @string definitions before any entry uses them.
+            if skipTypes.contains(type) {
+                out += "\n" + entry.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+                continue
+            }
+            let k = String(entry[keyR])
             if !have.contains(k) { have.insert(k); out += "\n" + entry.trimmingCharacters(in: .whitespacesAndNewlines) + "\n" }
         }
         return out

@@ -110,13 +110,16 @@ enum PDFExporter {
             process.standardError = pipe
             // Drain the pipe CONCURRENTLY: tectonic can emit > 64 KB (downloads,
             // many warnings); reading only after exit would fill the pipe and
-            // deadlock waitUntilExit(). Keep just the tail for the error log.
+            // deadlock waitUntilExit(). The handler is the sole reader — don't
+            // also call readDataToEndOfFile() after clearing it, since the
+            // setter unwinds asynchronously and a still-in-flight handler call
+            // would race the manual read (PipeTail's lock makes the append
+            // safe, but the same bytes could land twice).
             let tail = PipeTail()
             pipe.fileHandleForReading.readabilityHandler = { tail.append($0.availableData) }
             try process.run()
             process.waitUntilExit()
             pipe.fileHandleForReading.readabilityHandler = nil
-            tail.append(pipe.fileHandleForReading.readDataToEndOfFile())
 
             let pdfURL = dir.appendingPathComponent("\(stem).pdf")
             if process.terminationStatus == 0, FileManager.default.fileExists(atPath: pdfURL.path) {

@@ -391,8 +391,10 @@ function latexComplete(context: CompletionContext): CompletionResult | null {
 // every keystroke doesn't re-scan a long document.
 
 interface DocToken { text: string; count: number }
-let cachedDoc = "";
-let cachedTokens: DocToken[] = [];
+// Keyed by the doc's underlying Text object so each tab gets its own cache —
+// avoids re-scanning every tab switch and never confuses two tabs that happen
+// to contain identical content.
+const tokenCache = new WeakMap<object, DocToken[]>();
 const TOKEN_RE = new RegExp(
   // \command + optional [opt] + any number of {arg} + optional sub/super:
   // captures `\frac{a}{b}`, `\binom{n}{k}`, `\sqrt[3]{x}`,
@@ -425,8 +427,14 @@ function isWellFormed(tok: string): boolean {
  * re-show them via doc recall (would create duplicate completions). */
 const BUILT_IN_LABELS = new Set<string>();
 
-function tokensIn(doc: string): DocToken[] {
-  if (doc === cachedDoc) return cachedTokens;
+function tokensIn(text: { toString(): string } & object): DocToken[] {
+  // CodeMirror's Text instance is immutable — same instance means same
+  // content. Using it as the WeakMap key lets the cache survive doc switches
+  // and gets GC'd when the tab closes. No more re-scanning on every keystroke
+  // in a second tab.
+  const hit = tokenCache.get(text);
+  if (hit) return hit;
+  const doc = text.toString();
   const freq = new Map<string, number>();
   let m: RegExpExecArray | null;
   TOKEN_RE.lastIndex = 0;
@@ -440,9 +448,9 @@ function tokensIn(doc: string): DocToken[] {
     if (!isWellFormed(tok)) continue;
     freq.set(tok, (freq.get(tok) ?? 0) + 1);
   }
-  cachedDoc = doc;
-  cachedTokens = [...freq.entries()].map(([text, count]) => ({ text, count }));
-  return cachedTokens;
+  const out = [...freq.entries()].map(([txt, count]) => ({ text: txt, count }));
+  tokenCache.set(text, out);
+  return out;
 }
 
 /** Inline IDE-style recall: prefix-match the cursor's word against the
@@ -456,8 +464,7 @@ function docTokenComplete(context: CompletionContext): CompletionResult | null {
   if (!before) return null;
   const partial = before.text;
   if (partial.length < 2 && !context.explicit) return null;
-  const doc = context.state.doc.toString();
-  const tokens = tokensIn(doc);
+  const tokens = tokensIn(context.state.doc);
   const matches = tokens
     .filter((t) => t.text !== partial && t.text.startsWith(partial))
     .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text))

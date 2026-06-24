@@ -95,8 +95,10 @@ enum TranscriptionService {
         do { try p.run(); p.waitUntilExit() } catch {
             pipe.fileHandleForReading.readabilityHandler = nil; return error.localizedDescription
         }
+        // Clearing the handler unwinds async — a still-in-flight invocation
+        // could race with readDataToEndOfFile() and append the same bytes
+        // twice. The handler is the sole reader; trust it to have drained.
         pipe.fileHandleForReading.readabilityHandler = nil
-        tail.append(pipe.fileHandleForReading.readDataToEndOfFile())
         return p.terminationStatus == 0 ? nil : String(tail.string().suffix(300))
     }
 
