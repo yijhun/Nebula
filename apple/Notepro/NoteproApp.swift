@@ -14,7 +14,11 @@ struct NoteproApp: App {
     @FocusedValue(\.tabsModel) private var focusedTabs
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // The `for: UUID.self` form is what unlocks SwiftUI multi-window on
+        // macOS — without a window-identity value, openWindow(id:) just
+        // re-focuses the existing window. Each "新視窗" call now passes a
+        // fresh UUID so a real new window opens.
+        WindowGroup(id: "main", for: UUID.self) { _ in
             RootView()
                 .environmentObject(vault)
                 .environmentObject(index)
@@ -132,6 +136,17 @@ struct NoteproApp: App {
                     .keyboardShortcut("\\", modifiers: .command).disabled(focusedTabs == nil)
                 Button(LZ("新分頁 New Tab")) { focusedTabs?.newTab() }
                     .keyboardShortcut("t", modifiers: .command).disabled(focusedTabs == nil)
+                Button(LZ("下一個分頁 Next Tab")) { focusedTabs?.nextTab() }
+                    .keyboardShortcut("]", modifiers: [.command, .shift]).disabled(focusedTabs == nil)
+                Button(LZ("上一個分頁 Prev Tab")) { focusedTabs?.prevTab() }
+                    .keyboardShortcut("[", modifiers: [.command, .shift]).disabled(focusedTabs == nil)
+                // ⌃1 .. ⌃9 — jump to the N-th tab. Command-1/2/3 are already
+                // claimed by edit/split/preview view modes, so we use Control.
+                ForEach(1..<10, id: \.self) { n in
+                    Button(LZ("分頁 \(n)")) { focusedTabs?.activate(at: n) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .control)
+                        .disabled(focusedTabs == nil)
+                }
                 Divider()
                 Button(LZ("資料庫檢視 Database")) {
                     NotificationCenter.default.post(

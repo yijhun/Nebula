@@ -58,10 +58,11 @@ struct RootView: View {
             Group {
                 if tabs.splitOn {
                     HSplitView {
-                        EditorPane().frame(minWidth: 360)
+                        EditorPane()
+                            .frame(minWidth: 360, maxWidth: .infinity)
                         SecondaryPane()
                             .environmentObject(tabs.secondary)
-                            .frame(minWidth: 300)
+                            .frame(minWidth: 300, maxWidth: .infinity)
                     }
                 } else {
                     EditorPane()
@@ -775,9 +776,10 @@ struct EditorPane: View {
                     Button { tabs.splitOn.toggle() } label: {
                         Label(LZ("分割"), systemImage: "rectangle.split.2x1")
                     }
-                    Button { openWindow(id: "main") } label: {
+                    Button { openWindow(id: "main", value: UUID()) } label: {
                         Label(LZ("新視窗"), systemImage: "macwindow.badge.plus")
                     }
+                    .keyboardShortcut("n", modifiers: [.command, .option])
                     Divider()
                     Button { NotificationCenter.default.post(name: .noteproOpenShortcuts, object: nil) } label: {
                         Label(LZ("快捷鍵 Shortcuts"), systemImage: "keyboard")
@@ -809,7 +811,7 @@ struct EditorPane: View {
                             .allowsHitTesting(tab.id == tabs.activeID)
                     }
                 }
-                .frame(minWidth: 320)
+                .frame(minWidth: 320, maxWidth: .infinity)
 
                 // LaTeX mode: live compiled-PDF preview (Markdown uses the web
                 // preview inside the editor instead).
@@ -817,7 +819,7 @@ struct EditorPane: View {
                     PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
                                syncTarget: editor.syncTarget,
                                onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
-                        .frame(minWidth: 280)
+                        .frame(minWidth: 280, maxWidth: .infinity)
                         .overlay(alignment: .topTrailing) {
                             if editor.isCompilingPreview || editor.aiFixing {
                                 HStack(spacing: 5) {

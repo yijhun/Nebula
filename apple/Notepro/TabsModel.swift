@@ -59,4 +59,21 @@ final class TabsModel: ObservableObject {
     }
 
     func closeActive() { close(activeID) }
+
+    // ── Tab navigation (multi-tab jumping) ──────────────────────────────
+    /// Move focus to the next tab (wraps to the first).
+    func nextTab() {
+        guard let i = tabs.firstIndex(where: { $0.id == activeID }) else { return }
+        activeID = tabs[(i + 1) % tabs.count].id
+    }
+    /// Move focus to the previous tab (wraps to the last).
+    func prevTab() {
+        guard let i = tabs.firstIndex(where: { $0.id == activeID }) else { return }
+        activeID = tabs[(i - 1 + tabs.count) % tabs.count].id
+    }
+    /// Jump to the 1-indexed N-th tab (no-op if out of range).
+    func activate(at index: Int) {
+        guard index >= 1, index <= tabs.count else { return }
+        activeID = tabs[index - 1].id
+    }
 }
