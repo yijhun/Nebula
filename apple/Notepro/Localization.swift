@@ -50,6 +50,7 @@ let EN: [String: String] = [
     "AI 修復 LaTeX": "AI Fix LaTeX", "AI 修復": "AI Fix",
     "插入 Insert": "Insert",
     "插入引用（Zotero）": "Insert Citation (Zotero)",
+    "在 Zotero 開啟此引用": "Open Citation in Zotero",
     "在文件內尋找 Find": "Find in Document",
     "屬性 Properties": "Properties", "新增屬性…": "Add property…",
     "快捷鍵 Shortcuts": "Shortcuts", "字": "words", "編譯中": "Compiling",

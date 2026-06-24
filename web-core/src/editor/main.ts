@@ -266,6 +266,44 @@ const api = {
   /** Jump the editor's cursor to a 1-indexed line and scroll it into view —
    * used by SyncTeX reverse (PDF click → editor) from the native shell. */
   jumpToLine(line: number): void { jumpEditorToLine(line); },
+  /** The citekey at/around the cursor — from `[@key]`, `[@key; @key2]`, or
+   * `\cite{key}` / `\citep{...}` etc. Returns "" if the cursor isn't on one.
+   * Used by "open in Zotero". */
+  citeAtCursor(): string {
+    const pos = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(pos);
+    const col = pos - line.from;
+    const text = line.text;
+    // Markdown `[@key]` (possibly multiple, `;`-separated): find one whose
+    // span contains the cursor, then pick the key nearest the cursor.
+    const md = /\[([^\]\[\n]*@[^\]\n]*)\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = md.exec(text))) {
+      if (col >= m.index && col <= m.index + m[0].length) {
+        const inner = m[1]!;
+        const keys = [...inner.matchAll(/@([\w:.\-]+)/g)];
+        if (!keys.length) continue;
+        // nearest key to the cursor
+        let best = keys[0]!; let bestDist = Infinity;
+        for (const k of keys) {
+          const kStart = m.index + 1 + (k.index ?? 0);
+          const d = Math.abs(kStart - col);
+          if (d < bestDist) { bestDist = d; best = k; }
+        }
+        return best[1]!;
+      }
+    }
+    // LaTeX `\cite{key}` / `\citep{a,b}` etc.
+    const tex = /\\[a-zA-Z]*cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)\}/g;
+    while ((m = tex.exec(text))) {
+      if (col >= m.index && col <= m.index + m[0].length) {
+        const inner = m[1]!;
+        const keys = inner.split(",").map((s) => s.trim()).filter(Boolean);
+        return keys[0] ?? "";
+      }
+    }
+    return "";
+  },
   /** Currently selected text (empty if there's no selection). */
   getSelection(): string {
     const { from, to } = view.state.selection.main;
@@ -598,11 +636,21 @@ function boot(): void {
 
   // Single click: open a [[wikilink]] (links stay one-click).
   previewEl?.addEventListener("click", (e) => {
-    const a = (e.target as HTMLElement)?.closest(".np-wikilink") as HTMLElement | null;
-    if (!a) return;
-    e.preventDefault();
-    const target = a.getAttribute("data-target");
-    if (target) postToHost({ type: "openLink", target });
+    const target = e.target as HTMLElement | null;
+    const a = target?.closest(".np-wikilink") as HTMLElement | null;
+    if (a) {
+      e.preventDefault();
+      const t = a.getAttribute("data-target");
+      if (t) postToHost({ type: "openLink", target: t });
+      return;
+    }
+    // Click a citation pill → open that item in Zotero (Better BibTeX URI).
+    const cite = target?.closest(".np-cite") as HTMLElement | null;
+    if (cite) {
+      e.preventDefault();
+      const key = cite.getAttribute("data-cite");
+      if (key) postToHost({ type: "openCite", key });
+    }
   });
   // Double click: jump the editor to that block's source line.
   // MathJax replaces `.math-display`'s children with an SVG inside `<mjx-container>`;

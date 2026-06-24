@@ -109,6 +109,9 @@ struct NoteproApp: App {
                 Button(LZ("插入引用（Zotero）")) { focusedEditor?.triggerCite() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                     .disabled(focusedEditor == nil)
+                Button(LZ("在 Zotero 開啟此引用")) { focusedEditor?.openCiteAtCursorInZotero() }
+                    .keyboardShortcut("k", modifiers: [.command, .option, .shift])
+                    .disabled(focusedEditor == nil)
             }
             CommandGroup(replacing: .help) {
                 Button(LZ("快捷鍵 Shortcuts")) {

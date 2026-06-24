@@ -345,6 +345,10 @@ final class EditorModel: ObservableObject, Identifiable {
             }
             return
         }
+        if type == "openCite" {
+            if let key = body["key"] as? String { Self.openInZotero(citekey: key) }
+            return
+        }
         switch type {
         case "ready":
             webReady = true
@@ -450,6 +454,25 @@ final class EditorModel: ObservableObject, Identifiable {
     /// Menu-invoked: open the AI overlay / Zotero cite picker in this editor.
     func triggerAI() { webView?.evaluateJavaScript("window.notepro.ai()") }
     func triggerCite() { webView?.evaluateJavaScript("window.notepro.cite()") }
+
+    /// Open the citation under the cursor in Zotero (Better BibTeX select URI).
+    func openCiteAtCursorInZotero() {
+        webView?.evaluateJavaScript("window.notepro.citeAtCursor()") { result, _ in
+            guard let key = result as? String, !key.isEmpty else {
+                self.statusText = "游標不在引用上（把游標移到 [@key] 內）"; return
+            }
+            Self.openInZotero(citekey: key)
+        }
+    }
+
+    /// Open a citekey in Zotero. Better BibTeX resolves `@citekey`; if Zotero
+    /// isn't running, macOS launches it first. Falls back to selecting by the
+    /// raw key (works for Zotero's own keys too).
+    static func openInZotero(citekey: String) {
+        let escaped = citekey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? citekey
+        guard let url = URL(string: "zotero://select/items/@\(escaped)") else { return }
+        NSWorkspace.shared.open(url)
+    }
     /// Open the in-document find bar (⌘F) inside the editor.
     func find() { webView?.evaluateJavaScript("window.notepro.find()") }
 

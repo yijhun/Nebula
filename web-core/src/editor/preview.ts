@@ -233,7 +233,7 @@ function remarkCitations() {
           type: "cite",
           data: {
             hName: "span",
-            hProperties: { className: ["np-cite"], title: keys.join(", ") },
+            hProperties: { className: ["np-cite"], title: keys.join(", "), dataCite: keys[0] },
             hChildren: [{ type: "text", value: display }],
           },
         });
