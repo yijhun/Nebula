@@ -142,11 +142,26 @@ struct NoteproApp: App {
                     .keyboardShortcut("[", modifiers: [.command, .shift]).disabled(focusedTabs == nil)
                 // ⌃1 .. ⌃9 — jump to the N-th tab. Command-1/2/3 are already
                 // claimed by edit/split/preview view modes, so we use Control.
-                ForEach(1..<10, id: \.self) { n in
-                    Button(LZ("分頁 \(n)")) { focusedTabs?.activate(at: n) }
-                        .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .control)
-                        .disabled(focusedTabs == nil)
-                }
+                // ForEach inside CommandMenu doesn't register keyboard shortcuts
+                // on macOS — each Button has to be declared explicitly.
+                Button(LZ("分頁 1")) { focusedTabs?.activate(at: 1) }
+                    .keyboardShortcut("1", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 2")) { focusedTabs?.activate(at: 2) }
+                    .keyboardShortcut("2", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 3")) { focusedTabs?.activate(at: 3) }
+                    .keyboardShortcut("3", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 4")) { focusedTabs?.activate(at: 4) }
+                    .keyboardShortcut("4", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 5")) { focusedTabs?.activate(at: 5) }
+                    .keyboardShortcut("5", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 6")) { focusedTabs?.activate(at: 6) }
+                    .keyboardShortcut("6", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 7")) { focusedTabs?.activate(at: 7) }
+                    .keyboardShortcut("7", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 8")) { focusedTabs?.activate(at: 8) }
+                    .keyboardShortcut("8", modifiers: .control).disabled(focusedTabs == nil)
+                Button(LZ("分頁 9")) { focusedTabs?.activate(at: 9) }
+                    .keyboardShortcut("9", modifiers: .control).disabled(focusedTabs == nil)
                 Divider()
                 Button(LZ("資料庫檢視 Database")) {
                     NotificationCenter.default.post(

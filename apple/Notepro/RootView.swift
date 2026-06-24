@@ -57,12 +57,11 @@ struct RootView: View {
         } detail: {
             Group {
                 if tabs.splitOn {
-                    HSplitView {
+                    DraggableHSplit(storageKey: "splitRatio.tabsSplit",
+                                    defaultRatio: 0.55, minLeft: 360, minRight: 300) {
                         EditorPane()
-                            .frame(minWidth: 360, maxWidth: .infinity)
-                        SecondaryPane()
-                            .environmentObject(tabs.secondary)
-                            .frame(minWidth: 300, maxWidth: .infinity)
+                    } right: {
+                        SecondaryPane().environmentObject(tabs.secondary)
                     }
                 } else {
                     EditorPane()
@@ -800,65 +799,79 @@ struct EditorPane: View {
             if editor.currentURL != nil { InlineTitleBar() }
             if editor.docMode == .markdown { PropertyPanel() }
 
-            HSplitView {
-                // Every tab's WebView stays alive (so switching preserves
-                // content/cursor/undo); only the active one is shown.
-                ZStack {
-                    ForEach(tabs.tabs) { tab in
-                        WebView()
-                            .environmentObject(tab)
-                            .opacity(tab.id == tabs.activeID ? 1 : 0)
-                            .allowsHitTesting(tab.id == tabs.activeID)
-                    }
-                }
-                .frame(minWidth: 320, maxWidth: .infinity)
-
-                // LaTeX mode: live compiled-PDF preview (Markdown uses the web
-                // preview inside the editor instead).
+            // Editor on the left; compiled-PDF preview on the right (only
+            // present in LaTeX or markdown+pdfPreviewOn). Both panes use a
+            // custom DraggableHSplit because SwiftUI's HSplitView refuses to
+            // drag with an NSViewRepresentable (WKWebView, PDFView) beside it.
+            Group {
                 if editor.latexPreviewVisible {
-                    PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
-                               syncTarget: editor.syncTarget,
-                               onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
-                        .frame(minWidth: 280, maxWidth: .infinity)
-                        .overlay(alignment: .topTrailing) {
-                            if editor.isCompilingPreview || editor.aiFixing {
-                                HStack(spacing: 5) {
-                                    ProgressView().controlSize(.small)
-                                    Text(editor.aiFixing ? "AI 修復中" : "編譯中")
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                .padding(6)
-                                .background(.regularMaterial, in: Capsule())
-                                .padding(8)
-                            } else if !editor.lastCompileError.isEmpty {
-                                VStack(alignment: .trailing, spacing: 6) {
-                                    Button { editor.aiFixLatex() } label: {
-                                        Label("AI 修復", systemImage: "wand.and.stars")
-                                    }
-                                    .buttonStyle(.borderedProminent).controlSize(.small)
-                                    if !editor.errorHint.isEmpty {
-                                        Button { editor.scrollToErrorLine() } label: {
-                                            Label(editor.errorLine.map { "第 \($0) 行：\(editor.errorHint)" } ?? editor.errorHint,
-                                                  systemImage: "exclamationmark.triangle.fill")
-                                                .font(.caption2).lineLimit(2)
-                                        }
-                                        .buttonStyle(.plain).foregroundStyle(.orange)
-                                        .frame(maxWidth: 260, alignment: .trailing)
-                                        .disabled(editor.errorLine == nil)
-                                    }
-                                }
-                                .padding(8)
-                            } else if editor.previewPDF == nil {
-                                Text("尚未編譯")
-                                    .font(.caption).foregroundStyle(.secondary).padding(10)
-                            }
-                        }
+                    DraggableHSplit(storageKey: "splitRatio.editorPdf",
+                                    defaultRatio: 0.55, minLeft: 320, minRight: 280) {
+                        editorStack
+                    } right: {
+                        pdfPanel
+                    }
+                } else {
+                    editorStack
                 }
             }
             backlinksBar
             Divider()
             statusBar
         }
+    }
+
+    /// The editor surface (every tab's WebView stays alive; only the active
+    /// one is shown). Used inside `DraggableHSplit` so the divider can drag.
+    private var editorStack: some View {
+        ZStack {
+            ForEach(tabs.tabs) { tab in
+                WebView()
+                    .environmentObject(tab)
+                    .opacity(tab.id == tabs.activeID ? 1 : 0)
+                    .allowsHitTesting(tab.id == tabs.activeID)
+            }
+        }
+    }
+
+    /// The compiled-PDF live preview pane (with compile-status overlays).
+    private var pdfPanel: some View {
+        PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
+                   syncTarget: editor.syncTarget,
+                   onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
+            .overlay(alignment: .topTrailing) {
+                if editor.isCompilingPreview || editor.aiFixing {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text(editor.aiFixing ? "AI 修復中" : "編譯中")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+                } else if !editor.lastCompileError.isEmpty {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Button { editor.aiFixLatex() } label: {
+                            Label("AI 修復", systemImage: "wand.and.stars")
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        if !editor.errorHint.isEmpty {
+                            Button { editor.scrollToErrorLine() } label: {
+                                Label(editor.errorLine.map { "第 \($0) 行：\(editor.errorHint)" } ?? editor.errorHint,
+                                      systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption2).lineLimit(2)
+                            }
+                            .buttonStyle(.plain).foregroundStyle(.orange)
+                            .frame(maxWidth: 260, alignment: .trailing)
+                            .disabled(editor.errorLine == nil)
+                        }
+                    }
+                    .padding(8)
+                } else if editor.previewPDF == nil {
+                    Text("尚未編譯")
+                        .font(.caption).foregroundStyle(.secondary).padding(10)
+                }
+            }
     }
 
     /// Bottom status bar: message on the left; word count / mode / busy on the right.
