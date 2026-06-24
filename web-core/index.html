@@ -47,6 +47,36 @@
         font-size: 15px;
         line-height: 1.7;
       }
+      /* Draggable divider between editor and preview (split mode only). The
+         hit zone is 9px wide with a 1px visible line centred — a 1px target is
+         nearly impossible to grab, especially over a WebView. */
+      #np-divider {
+        flex: 0 0 9px;
+        cursor: col-resize;
+        position: relative;
+        background: transparent;
+        z-index: 5;
+      }
+      #np-divider::before {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: #1b1d23;
+      }
+      body.np-light #np-divider::before { background: #e6e6e9; }
+      #np-divider:hover::before, #np-divider.np-dragging::before {
+        background: #4a9eff;
+        box-shadow: 0 0 0 1px rgba(74, 158, 255, 0.4);
+      }
+      /* Only show the divider in split mode (edit/live/preview hide #preview). */
+      #app:not(.mode-split) #np-divider { display: none; }
+      /* Split-mode editor width is driven by --split-ratio (set by the divider
+         drag in main.ts); preview grows to fill the rest. */
+      #app.mode-split #editor { flex: 0 0 var(--split-ratio, 50%); }
+
       /* View modes (set by window.notepro.setViewMode) */
       #app.mode-edit #preview,
       #app.mode-live #preview {
@@ -278,6 +308,7 @@
   <body>
     <div id="app">
       <div id="editor"></div>
+      <div id="np-divider" title="拖曳調整寬度"></div>
       <div id="preview"></div>
     </div>
     <script>

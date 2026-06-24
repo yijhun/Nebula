@@ -14,7 +14,11 @@ struct NoteproApp: App {
     @FocusedValue(\.tabsModel) private var focusedTabs
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // `for: UUID.self` — on current macOS a value-less WindowGroup's
+        // openWindow(id:) only re-focuses the existing window; giving each
+        // window a unique value makes openWindow(value: UUID()) spawn a real
+        // new one. The launch window binds a nil value (ignored).
+        WindowGroup(id: "main", for: UUID.self) { _ in
             RootView()
                 .environmentObject(vault)
                 .environmentObject(index)

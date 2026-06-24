@@ -58,16 +58,16 @@ struct RootView: View {
             Group {
                 if tabs.splitOn {
                     HSplitView {
-                        EditorPane().frame(minWidth: 360)
+                        EditorPane().frame(minWidth: 260)
                         SecondaryPane()
                             .environmentObject(tabs.secondary)
-                            .frame(minWidth: 300)
+                            .frame(minWidth: 240)
                     }
                 } else {
                     EditorPane()
                 }
             }
-            .frame(minWidth: 480)
+            .frame(minWidth: 420)
             .animation(.easeInOut(duration: 0.2), value: tabs.splitOn)
         }
     }
@@ -775,7 +775,7 @@ struct EditorPane: View {
                     Button { tabs.splitOn.toggle() } label: {
                         Label(LZ("分割"), systemImage: "rectangle.split.2x1")
                     }
-                    Button { openWindow(id: "main") } label: {
+                    Button { openWindow(id: "main", value: UUID()) } label: {
                         Label(LZ("新視窗"), systemImage: "macwindow.badge.plus")
                     }
                     .keyboardShortcut("n", modifiers: [.command, .option])
@@ -802,9 +802,9 @@ struct EditorPane: View {
             // Editor on the left; compiled-PDF preview on the right (only
             // present in LaTeX or markdown+pdfPreviewOn).
             HSplitView {
-                editorStack.frame(minWidth: 320)
+                editorStack.frame(minWidth: 240)
                 if editor.latexPreviewVisible {
-                    pdfPanel.frame(minWidth: 280)
+                    pdfPanel.frame(minWidth: 240)
                 }
             }
             backlinksBar
@@ -814,7 +814,7 @@ struct EditorPane: View {
     }
 
     /// The editor surface (every tab's WebView stays alive; only the active
-    /// one is shown). Used inside `DraggableHSplit` so the divider can drag.
+    /// one is shown).
     private var editorStack: some View {
         ZStack {
             ForEach(tabs.tabs) { tab in

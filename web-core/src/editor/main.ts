@@ -489,11 +489,58 @@ const api = {
 };
 (window as unknown as { notepro: typeof api }).notepro = api;
 
+/** Wire the editor|preview divider so split mode is resizable. Sets the
+ * editor's flex-basis as a % of the app width (responsive to window resize),
+ * persisted in localStorage. A full-window overlay during the drag stops
+ * CodeMirror / the preview from swallowing pointermove events. */
+function setupSplitDivider(app: HTMLElement | null, editor: HTMLElement): void {
+  const divider = document.getElementById("np-divider");
+  if (!app || !divider) return;
+
+  const KEY = "np.splitRatio";
+  const clampRatio = (r: number) => Math.max(0.2, Math.min(0.8, r));
+  const saved = parseFloat(localStorage.getItem(KEY) ?? "");
+  let ratio = Number.isFinite(saved) ? clampRatio(saved) : 0.5;
+  // Drive the editor width via a CSS var consumed ONLY by the split-mode rule,
+  // so edit/live/preview keep their own flex-basis (100% editor, etc.).
+  const apply = () => { app.style.setProperty("--split-ratio", `${ratio * 100}%`); };
+  apply();
+
+  divider.addEventListener("pointerdown", (e: PointerEvent) => {
+    e.preventDefault();
+    divider.classList.add("np-dragging");
+    // Block CodeMirror/preview from grabbing the move + show the resize cursor
+    // everywhere during the drag.
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:9999;cursor:col-resize;";
+    document.body.appendChild(overlay);
+
+    const onMove = (ev: PointerEvent) => {
+      const rect = app.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      ratio = clampRatio((ev.clientX - rect.left) / rect.width);
+      apply();
+    };
+    const onUp = () => {
+      divider.classList.remove("np-dragging");
+      overlay.remove();
+      localStorage.setItem(KEY, String(ratio));
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  });
+}
+
 function boot(): void {
   appEl = document.getElementById("app");
   const parent = document.getElementById("editor");
   previewEl = document.getElementById("preview");
   if (!parent) return;
+
+  setupSplitDivider(appEl, parent);
 
   // Drag an image file onto the editor/preview → send bytes to native, which
   // saves it into the vault and inserts `![[name]]`. (Done in JS because the
