@@ -679,17 +679,19 @@ struct EditorPane: View {
                     ForEach(tabs.tabs) { tab in TabChip(tab: tab) }
                     // Trailing flexible spacer so dropping anywhere in the empty
                     // part of the bar still lands a drop (appends to the end).
-                    Color.clear.frame(minWidth: 40, maxWidth: .infinity, minHeight: 1)
+                    Color.clear.frame(minWidth: 40, maxWidth: .infinity)
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
             }
             Button { tabs.newTab() } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless)
                 .help("新分頁（檢視選單 ⌘T）")
                 .padding(.horizontal, 8)
         }
+        // Fixed compact height — a horizontal ScrollView is otherwise greedy in
+        // the vertical axis and would balloon the bar to fill the window.
+        .frame(height: 34)
         .background(tabBarDropTargeted ? Color.accentColor.opacity(0.12) : Color.clear)
         .background(.bar)
         // Drop anywhere on the bar (not just on a chip) → reorder/open at the end.
