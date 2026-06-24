@@ -671,21 +671,33 @@ struct EditorPane: View {
         ("beamer", "Beamer (Slides)"),
     ]
 
+    @State private var tabBarDropTargeted = false
     private var tabBar: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(tabs.tabs) { tab in TabChip(tab: tab) }
+                    // Trailing flexible spacer so dropping anywhere in the empty
+                    // part of the bar still lands a drop (appends to the end).
+                    Color.clear.frame(minWidth: 40, maxWidth: .infinity, minHeight: 1)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Button { tabs.newTab() } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless)
                 .help("新分頁（檢視選單 ⌘T）")
                 .padding(.horizontal, 8)
         }
+        .background(tabBarDropTargeted ? Color.accentColor.opacity(0.12) : Color.clear)
         .background(.bar)
+        // Drop anywhere on the bar (not just on a chip) → reorder/open at the end.
+        .dropDestination(for: URL.self) { items, _ in
+            guard let url = items.first, let last = tabs.tabs.last else { return false }
+            tabs.handleTabDrop(url, onto: last.id, after: true)
+            return true
+        } isTargeted: { tabBarDropTargeted = $0 }
     }
 
     /// Pick a PDF (anywhere on disk) and open it in a reader window.

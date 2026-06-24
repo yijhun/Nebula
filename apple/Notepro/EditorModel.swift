@@ -95,6 +95,7 @@ final class EditorModel: ObservableObject, Identifiable {
     private weak var webView: WKWebView?
     private(set) var currentURL: URL?
     private var webReady = false
+    private var pendingOpenURL: URL?   // open() called before the WebView booted
     private var previewWork: DispatchWorkItem?
 
     /// SyncTeX forward target: which PDF page + box to highlight when the
@@ -359,6 +360,8 @@ final class EditorModel: ObservableObject, Identifiable {
             if latexPreviewVisible { scheduleLatexPreview() }
             refreshProperties()
             statusText = currentURL?.lastPathComponent ?? "新文件 Untitled"
+            // A file requested before the WebView booted — load it now.
+            if let p = pendingOpenURL { pendingOpenURL = nil; open(p) }
         case "dirty":
             statusText = "已編輯 • \(currentURL?.lastPathComponent ?? "Untitled")"
             if latexPreviewVisible { scheduleLatexPreview() }
@@ -756,6 +759,16 @@ final class EditorModel: ObservableObject, Identifiable {
 
     /// Open a file from the vault (or anywhere) into this window's editor.
     func open(_ url: URL) {
+        // A tab created on-the-fly (e.g. drag-drop onto the tab bar) may not
+        // have its WebView yet — setContent would no-op and the editor would
+        // boot showing the default welcome doc. Defer until `ready` fires.
+        guard webReady else {
+            pendingOpenURL = url
+            currentURL = url
+            displayName = url.lastPathComponent
+            docMode = Self.mode(for: url)
+            return
+        }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             currentURL = url
