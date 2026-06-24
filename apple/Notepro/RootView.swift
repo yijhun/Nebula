@@ -913,6 +913,7 @@ struct EditorPane: View {
 struct TabChip: View {
     @EnvironmentObject var tabs: TabsModel
     @ObservedObject var tab: EditorModel
+    @State private var dropTargeted = false
 
     var body: some View {
         let active = tabs.activeID == tab.id
@@ -933,10 +934,22 @@ struct TabChip: View {
             active ? Color.accentColor.opacity(0.22) : Color.clear,
             in: RoundedRectangle(cornerRadius: 6)
         )
+        // Blue edge while a dragged tab/file hovers over this slot.
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
+        )
         .contentShape(Rectangle())
         .onTapGesture { tabs.activate(tab.id) }
+        // Drop a dragged tab (or sidebar file) here → reorder / open at this slot.
+        .dropDestination(for: URL.self) { items, _ in
+            guard let url = items.first else { return false }
+            tabs.handleTabDrop(url, onto: tab.id)
+            return true
+        } isTargeted: { dropTargeted = $0 }
 
-        // A saved tab can be dragged into the split pane to open there.
+        // A saved tab can be dragged — within the bar to reorder, or into the
+        // split pane to open there.
         if let url = tab.currentURL {
             chip.draggable(url)
         } else {

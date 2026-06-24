@@ -76,4 +76,25 @@ final class TabsModel: ObservableObject {
         guard index >= 1, index <= tabs.count else { return }
         activeID = tabs[index - 1].id
     }
+
+    /// Handle a URL dropped onto the tab `targetID`:
+    ///  • if an open tab already shows that URL → reorder it to that slot;
+    ///  • otherwise → open the file as a new tab inserted at that slot.
+    /// Used for drag-to-reorder in the tab bar (and dropping a sidebar file).
+    func handleTabDrop(_ url: URL, onto targetID: EditorModel.ID) {
+        guard let targetIdx = tabs.firstIndex(where: { $0.id == targetID }) else { return }
+        if let srcIdx = tabs.firstIndex(where: { $0.currentURL == url }) {
+            if srcIdx == targetIdx { return }
+            let moved = tabs.remove(at: srcIdx)
+            let insertAt = tabs.firstIndex(where: { $0.id == targetID }) ?? targetIdx
+            tabs.insert(moved, at: insertAt)
+            activeID = moved.id
+        } else {
+            let e = EditorModel()
+            e.vaultRoot = tabs.first?.vaultRoot
+            e.open(url)
+            tabs.insert(e, at: targetIdx)
+            activeID = e.id
+        }
+    }
 }
