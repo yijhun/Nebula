@@ -17,7 +17,7 @@ struct RootView: View {
     /// reliably presents one `.sheet` per view).
     enum Modal: Identifiable {
         case palette(String, String)   // mode ("files"/"content"), seed query
-        case semantic, graph, history, shortcuts, transcribe, literature
+        case semantic, graph, history, shortcuts, transcribe, literature, cowork
         case database(DBTarget)
         var id: String {
             switch self {
@@ -28,6 +28,7 @@ struct RootView: View {
             case .shortcuts: return "shortcuts"
             case .transcribe: return "transcribe"
             case .literature: return "literature"
+            case .cowork: return "cowork"
             case .database(let t): return "db-\(t.id)"
             }
         }
@@ -134,6 +135,7 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenShortcuts)) { _ in modal = .shortcuts }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTranscribe)) { _ in modal = .transcribe }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLiterature)) { _ in modal = .literature }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenCowork)) { _ in modal = .cowork }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSemantic)) { _ in modal = .semantic }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
             modal = .palette(note.userInfo?["mode"] as? String ?? "files",
@@ -187,6 +189,8 @@ struct RootView: View {
                 onClose: { modal = nil }
             )
             .environmentObject(vault).environmentObject(tabs.active)
+        case .cowork:
+            CoworkView(onClose: { modal = nil }).environmentObject(tabs.active)
         }
     }
 
@@ -746,6 +750,9 @@ struct EditorPane: View {
 
                 Menu {
                     Button { editor.triggerSemantic() } label: { Label(LZ("問筆記"), systemImage: "brain") }
+                    Button { NotificationCenter.default.post(name: .noteproOpenCowork, object: nil) } label: {
+                        Label(LZ("與 Claude 共筆"), systemImage: "sparkles.rectangle.stack")
+                    }
                     Button { NotificationCenter.default.post(name: .noteproOpenLiterature, object: nil) } label: {
                         Label(LZ("找文獻 arXiv/ADS"), systemImage: "magnifyingglass.circle")
                     }
@@ -1389,5 +1396,113 @@ struct LiteratureSearchView: View {
         let ns = bib as NSString
         guard let m = re.firstMatch(in: bib, range: NSRange(location: 0, length: ns.length)) else { return nil }
         return ns.substring(with: m.range(at: 1))
+    }
+}
+
+/// Cowork with Claude — pick a scope (selection / heading-bounded section /
+/// whole note), a preset task, write/edit the prompt, then "Copy & Open
+/// claude.ai". Goes via the user's claude.ai subscription — no API key.
+struct CoworkView: View {
+    @EnvironmentObject var editor: EditorModel
+    let onClose: () -> Void
+    @State private var scope = "selection"
+    @State private var preset = "improve"
+    @State private var instruction = ""
+    @State private var payload = ""
+    @State private var status = ""
+
+    private struct Preset { let id, label, prompt: String }
+    private let presets: [Preset] = [
+        .init(id: "improve",  label: "改寫得更清楚精煉",
+              prompt: "請把下面這段學術寫作改得更清楚精煉(保留術語、數學、引用),用條列點出主要修改原因。\n\n"),
+        .init(id: "review",   label: "審稿/找邏輯漏洞",
+              prompt: "請以期刊審稿人角度評論下面這段,找邏輯漏洞、過度推論、缺少證據之處,並列改進建議。\n\n"),
+        .init(id: "explain",  label: "解釋這個推導/方程式",
+              prompt: "請詳細解釋下面這段 LaTeX 公式或推導:每一步在做什麼、用了什麼假設、結果的物理意義。\n\n"),
+        .init(id: "summary",  label: "摘要(中文)",
+              prompt: "請用 3~5 句中文摘要下面這段,保留關鍵數字與結論。\n\n"),
+        .init(id: "translate",label: "翻成英文(學術)",
+              prompt: "請把下面這段翻成適合天文期刊的英文(自然、簡練、保留術語):\n\n"),
+        .init(id: "outline",  label: "從這段擴寫成段落大綱",
+              prompt: "請把下面這個粗胚擴寫成一段論文段落的大綱(每點一句、保留邏輯順序):\n\n"),
+        .init(id: "freeform", label: "自訂(下面自己寫)", prompt: ""),
+    ]
+
+    private var fullPrompt: String {
+        let head = preset == "freeform"
+            ? instruction
+            : (presets.first { $0.id == preset }?.prompt ?? "") + instruction
+        return head + "---\n" + payload
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(LZ("與 Claude 共筆")).font(.headline)
+                Spacer()
+                Button(LZ("關閉"), action: onClose).keyboardShortcut(.escape, modifiers: [])
+            }
+
+            HStack(spacing: 16) {
+                Picker(LZ("範圍"), selection: $scope) {
+                    Text(LZ("選取")).tag("selection")
+                    Text(LZ("本章節")).tag("section")
+                    Text(LZ("整篇")).tag("full")
+                }.pickerStyle(.segmented).labelsHidden().onChange(of: scope) { _, _ in refresh() }
+
+                Picker("", selection: $preset) {
+                    ForEach(presets, id: \.id) { p in Text(LZ(p.label)).tag(p.id) }
+                }.labelsHidden().frame(width: 240)
+            }
+
+            if preset == "freeform" {
+                Text(LZ("自訂指令")).font(.caption).foregroundStyle(.secondary)
+                TextEditor(text: $instruction).frame(minHeight: 60)
+                    .font(.system(size: 13)).border(Color.secondary.opacity(0.3))
+            } else {
+                Text(LZ("附加說明(可空)")).font(.caption).foregroundStyle(.secondary)
+                TextField("", text: $instruction).textFieldStyle(.roundedBorder)
+            }
+
+            Text(LZ("內容") + "  ·  \(payload.count) " + LZ("字元"))
+                .font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                Text(payload.isEmpty ? "(空 — 換個範圍或先選取文字)" : payload)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .background(Color.gray.opacity(0.08))
+            .frame(maxHeight: 200)
+
+            HStack {
+                if !status.isEmpty {
+                    Text(status).font(.caption).foregroundStyle(.green)
+                }
+                Spacer()
+                Button(LZ("只複製到剪貼簿")) { copyOnly() }
+                Button(LZ("複製 + 開 claude.ai")) { copyAndOpen() }
+                    .keyboardShortcut(.return).buttonStyle(.borderedProminent)
+                    .disabled(payload.isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 620, height: 540)
+        .onAppear(perform: refresh)
+    }
+
+    private func refresh() {
+        editor.getCoworkPayload(scope: scope) { p in payload = p }
+    }
+    private func copyOnly() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fullPrompt, forType: .string)
+        status = LZ("已複製到剪貼簿")
+    }
+    private func copyAndOpen() {
+        copyOnly()
+        if let url = URL(string: "https://claude.ai/new") { NSWorkspace.shared.open(url) }
+        status = LZ("已複製 — 到 claude.ai 按 ⌘V 貼上")
     }
 }

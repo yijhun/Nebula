@@ -263,6 +263,27 @@ const api = {
   getContent(): string {
     return view.state.doc.toString();
   },
+  /** Currently selected text (empty if there's no selection). */
+  getSelection(): string {
+    const { from, to } = view.state.selection.main;
+    return from === to ? "" : view.state.sliceDoc(from, to);
+  },
+  /** Heading-bounded section the cursor is in (h1/h2/h3 — whichever's
+   * closest), or "" if no preceding heading. Useful for Cowork-with-Claude. */
+  getCurrentSection(): string {
+    const doc = view.state.doc;
+    const headPos = view.state.selection.main.head;
+    const headLine = doc.lineAt(headPos).number;
+    let startLine = 1;
+    for (let i = headLine; i >= 1; i--) {
+      if (/^#{1,6}\s/.test(doc.line(i).text)) { startLine = i; break; }
+    }
+    let endLine = doc.lines;
+    for (let i = headLine + 1; i <= doc.lines; i++) {
+      if (/^#{1,6}\s/.test(doc.line(i).text)) { endLine = i - 1; break; }
+    }
+    return doc.sliceString(doc.line(startLine).from, doc.line(endLine).to);
+  },
   /** Switch editor language: "markdown" or "latex". */
   setMode(next: Mode): void {
     mode = next;

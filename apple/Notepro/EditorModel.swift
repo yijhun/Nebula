@@ -581,6 +581,22 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
+    /// Cowork-with-Claude payload helpers. The selection / heading-bounded
+    /// section / whole note — picked by the user in the Cowork sheet, then
+    /// composed with a prompt and shipped via clipboard + open claude.ai.
+    func getCoworkPayload(scope: String, completion: @escaping (String) -> Void) {
+        guard let webView else { completion(""); return }
+        let js: String
+        switch scope {
+        case "selection": js = "window.notepro.getSelection()"
+        case "section":   js = "window.notepro.getCurrentSection()"
+        default:          js = "window.notepro.getContent()"
+        }
+        webView.evaluateJavaScript(js) { result, _ in
+            completion(result as? String ?? "")
+        }
+    }
+
     private func applyViewMode() {
         guard webReady else { return }
         // In LaTeX mode the web layer is editor-only; the native PDFPreview pane
