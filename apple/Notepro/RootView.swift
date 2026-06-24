@@ -57,11 +57,11 @@ struct RootView: View {
         } detail: {
             Group {
                 if tabs.splitOn {
-                    DraggableHSplit(storageKey: "splitRatio.tabsSplit",
-                                    defaultRatio: 0.55, minLeft: 360, minRight: 300) {
-                        EditorPane()
-                    } right: {
-                        SecondaryPane().environmentObject(tabs.secondary)
+                    HSplitView {
+                        EditorPane().frame(minWidth: 360)
+                        SecondaryPane()
+                            .environmentObject(tabs.secondary)
+                            .frame(minWidth: 300)
                     }
                 } else {
                     EditorPane()
@@ -775,7 +775,7 @@ struct EditorPane: View {
                     Button { tabs.splitOn.toggle() } label: {
                         Label(LZ("分割"), systemImage: "rectangle.split.2x1")
                     }
-                    Button { openWindow(id: "main", value: UUID()) } label: {
+                    Button { openWindow(id: "main") } label: {
                         Label(LZ("新視窗"), systemImage: "macwindow.badge.plus")
                     }
                     .keyboardShortcut("n", modifiers: [.command, .option])
@@ -800,19 +800,11 @@ struct EditorPane: View {
             if editor.docMode == .markdown { PropertyPanel() }
 
             // Editor on the left; compiled-PDF preview on the right (only
-            // present in LaTeX or markdown+pdfPreviewOn). Both panes use a
-            // custom DraggableHSplit because SwiftUI's HSplitView refuses to
-            // drag with an NSViewRepresentable (WKWebView, PDFView) beside it.
-            Group {
+            // present in LaTeX or markdown+pdfPreviewOn).
+            HSplitView {
+                editorStack.frame(minWidth: 320)
                 if editor.latexPreviewVisible {
-                    DraggableHSplit(storageKey: "splitRatio.editorPdf",
-                                    defaultRatio: 0.55, minLeft: 320, minRight: 280) {
-                        editorStack
-                    } right: {
-                        pdfPanel
-                    }
-                } else {
-                    editorStack
+                    pdfPanel.frame(minWidth: 280)
                 }
             }
             backlinksBar

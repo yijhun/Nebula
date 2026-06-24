@@ -14,11 +14,7 @@ struct NoteproApp: App {
     @FocusedValue(\.tabsModel) private var focusedTabs
 
     var body: some Scene {
-        // The `for: UUID.self` form is what unlocks SwiftUI multi-window on
-        // macOS — without a window-identity value, openWindow(id:) just
-        // re-focuses the existing window. Each "新視窗" call now passes a
-        // fresh UUID so a real new window opens.
-        WindowGroup(id: "main", for: UUID.self) { _ in
+        WindowGroup(id: "main") {
             RootView()
                 .environmentObject(vault)
                 .environmentObject(index)
