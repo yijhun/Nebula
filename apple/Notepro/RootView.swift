@@ -160,6 +160,10 @@ struct RootView: View {
             guard let url = note.userInfo?["url"] as? URL else { return }
             openWindow(id: "note", value: url)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPreviewWindow)) { note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            openWindow(id: "preview", value: url)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSemantic)) { _ in modal = .semantic }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
             modal = .palette(note.userInfo?["mode"] as? String ?? "files",

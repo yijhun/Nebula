@@ -205,7 +205,19 @@ final class EditorModel: ObservableObject, Identifiable {
             self?.noteNamesCache = note.userInfo?["names"] as? [String] ?? []
             self?.pushNoteList()
         }
+        // A popped-out preview window double-clicked → jump THIS editor (the
+        // source) if it's showing the same file.
+        mirrorJumpObserver = NotificationCenter.default.addObserver(
+            forName: .noteproMirrorJump, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, !self.isMirror,
+                  let url = note.userInfo?["url"] as? URL, url == self.currentURL,
+                  let line = note.userInfo?["line"] as? Int else { return }
+            self.webView?.evaluateJavaScript("window.notepro.jumpToLine(\(line))")
+            self.webView?.window?.makeKeyAndOrderFront(nil)
+        }
     }
+    private var mirrorJumpObserver: NSObjectProtocol?
 
     /// Push the current note dir + vault root so the preview can resolve images.
     func pushBasePaths() {
@@ -354,6 +366,22 @@ final class EditorModel: ObservableObject, Identifiable {
         }
         if type == "openCite" {
             if let key = body["key"] as? String { Self.openInZotero(citekey: key) }
+            return
+        }
+        if type == "popoutPreview" {
+            if let url = currentURL {
+                NotificationCenter.default.post(name: .noteproOpenPreviewWindow, object: nil,
+                                                userInfo: ["url": url])
+            }
+            return
+        }
+        if type == "previewJump" {
+            // Only meaningful from a popped-out preview: route the jump to the
+            // source editor showing the same file in the main window.
+            if isMirror, let url = currentURL, let line = body["line"] as? Int {
+                NotificationCenter.default.post(name: .noteproMirrorJump, object: nil,
+                                                userInfo: ["url": url, "line": line])
+            }
             return
         }
         switch type {
@@ -775,6 +803,7 @@ final class EditorModel: ObservableObject, Identifiable {
         if let vimObserver { NotificationCenter.default.removeObserver(vimObserver) }
         if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         if let noteListObserver { NotificationCenter.default.removeObserver(noteListObserver) }
+        if let mirrorJumpObserver { NotificationCenter.default.removeObserver(mirrorJumpObserver) }
         // Best-effort cleanup of the hidden in-place preview artifacts.
         if let dir = currentURL?.deletingLastPathComponent() {
             for ext in ["pdf", "tex"] {

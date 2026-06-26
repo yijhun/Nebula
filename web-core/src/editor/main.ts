@@ -580,6 +580,11 @@ function boot(): void {
 
   setupSplitDivider(appEl, parent);
 
+  // Pop-out button on the preview corner → detach the live preview window.
+  document.getElementById("np-preview-popout")?.addEventListener("click", () => {
+    postToHost({ type: "popoutPreview" });
+  });
+
   // Drag an image file onto the editor/preview → send bytes to native, which
   // saves it into the vault and inserts `![[name]]`. (Done in JS because the
   // WKWebView swallows native drops in a private subview.)
@@ -661,7 +666,11 @@ function boot(): void {
   previewEl?.addEventListener("dblclick", (e) => {
     for (const node of e.composedPath()) {
       if (node instanceof HTMLElement && node.hasAttribute("data-line")) {
-        jumpEditorToLine(Number(node.getAttribute("data-line")));
+        const line = Number(node.getAttribute("data-line"));
+        jumpEditorToLine(line);   // local jump (no-op visually in a mirror)
+        // Also tell the host: in a popped-out preview window this routes the
+        // jump to the SOURCE editor in the main window.
+        postToHost({ type: "previewJump", line });
         return;
       }
     }
