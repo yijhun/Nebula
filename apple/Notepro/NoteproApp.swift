@@ -191,6 +191,18 @@ struct NoteproApp: App {
             }
         }
 
+        // Standalone single-note windows (right-click ▸ 在新視窗開啟).
+        WindowGroup("筆記 Note", id: "note", for: URL.self) { $url in
+            if let url {
+                NoteWindowView(url: url)
+                    .environmentObject(vault)
+                    .environmentObject(index)
+                    .environmentObject(semIndex)
+                    .environmentObject(projects)
+                    .frame(minWidth: 480, minHeight: 360)
+            }
+        }
+
         Settings {
             SettingsView()
         }

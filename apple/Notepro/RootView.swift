@@ -57,11 +57,20 @@ struct RootView: View {
         } detail: {
             Group {
                 if tabs.splitOn {
-                    HSplitView {
-                        EditorPane().frame(minWidth: 260)
-                        SecondaryPane()
-                            .environmentObject(tabs.secondary)
-                            .frame(minWidth: 240)
+                    if tabs.splitVertical {
+                        VSplitView {
+                            EditorPane().frame(minHeight: 160)
+                            SecondaryPane()
+                                .environmentObject(tabs.secondary)
+                                .frame(minHeight: 140)
+                        }
+                    } else {
+                        HSplitView {
+                            EditorPane().frame(minWidth: 260)
+                            SecondaryPane()
+                                .environmentObject(tabs.secondary)
+                                .frame(minWidth: 240)
+                        }
                     }
                 } else {
                     EditorPane()
@@ -146,6 +155,10 @@ struct RootView: View {
             guard let url = note.userInfo?["url"] as? URL else { return }
             selection = [url]
             tabs.open(url, inNewTab: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenInWindow)) { note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            openWindow(id: "note", value: url)
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSemantic)) { _ in modal = .semantic }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
@@ -602,6 +615,10 @@ struct VaultSidebar: View {
                 NotificationCenter.default.post(name: .noteproOpenInNewTab, object: nil,
                                                 userInfo: ["url": node.url])
             }
+            Button(LZ("在新視窗開啟")) {
+                NotificationCenter.default.post(name: .noteproOpenInWindow, object: nil,
+                                                userInfo: ["url": node.url])
+            }
         }
         if node.url.pathExtension.lowercased() == "md", let p = project(for: dir) {
             if node.paperIndex != nil {
@@ -866,6 +883,20 @@ struct EditorPane: View {
         PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
                    syncTarget: editor.syncTarget,
                    onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
+            // Pop the compiled preview out into its own window (drag to another
+            // screen). Reuses the PDF reader window on the live preview file.
+            .overlay(alignment: .topLeading) {
+                if let pdf = editor.previewPDF {
+                    Button { openWindow(id: "pdf", value: pdf) } label: {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("預覽彈出到新視窗")
+                    .padding(6)
+                    .background(.regularMaterial, in: Circle())
+                    .padding(8)
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if editor.isCompilingPreview || editor.aiFixing {
                     HStack(spacing: 5) {
@@ -1013,6 +1044,10 @@ struct SecondaryPane: View {
                     .buttonStyle(.borderless).help("儲存")
                 Button { editor.exportPDF() } label: { Image(systemName: "doc.richtext") }
                     .buttonStyle(.borderless).help("匯出 PDF").disabled(editor.isExporting)
+                Button { tabs.splitVertical.toggle() } label: {
+                    Image(systemName: tabs.splitVertical ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                }
+                .buttonStyle(.borderless).help(tabs.splitVertical ? "改為左右分割" : "改為上下分割")
                 Button { tabs.splitOn = false } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).help("關閉分割")
             }
@@ -1569,5 +1604,39 @@ struct CoworkView: View {
         copyOnly()
         if let url = URL(string: "https://claude.ai/new") { NSWorkspace.shared.open(url) }
         status = LZ("已複製 — 到 claude.ai 按 ⌘V 貼上")
+    }
+}
+
+/// A standalone single-note window (drag/right-click ▸ 在新視窗開啟). Lightweight:
+/// just an editor + view-mode picker + save, no sidebar/tabs. Good for editing
+/// or displaying a second note on another screen.
+struct NoteWindowView: View {
+    let url: URL
+    @EnvironmentObject var vault: VaultModel
+    @StateObject private var editor = EditorModel()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(editor.displayName).font(.callout.weight(.medium)).lineLimit(1)
+                Spacer()
+                Picker("", selection: $editor.viewMode) {
+                    ForEach(editor.availableViewModes, id: \.self) { m in Text(LZ(m.label)).tag(m) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Button { editor.save() } label: { Image(systemName: "square.and.arrow.down") }
+                    .buttonStyle(.borderless).help("儲存 (⌘S)")
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.bar)
+            Divider()
+            WebView().environmentObject(editor)
+        }
+        .onAppear {
+            editor.vaultRoot = vault.rootURL
+            editor.open(url)
+        }
+        .navigationTitle(editor.displayName)
+        .focusedSceneValue(\.editorModel, editor)
     }
 }

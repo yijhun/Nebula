@@ -15,8 +15,10 @@ final class TabsModel: ObservableObject {
     @Published var tabs: [EditorModel]
     @Published var activeID: EditorModel.ID
 
-    /// Split view: a companion editor shown to the right when `splitOn`.
+    /// Split view: a companion editor shown beside/below the main one.
     @Published var splitOn = false
+    /// false = side-by-side (left|right), true = stacked (top/bottom).
+    @Published var splitVertical = false
     let secondary = EditorModel()
 
     init() {
