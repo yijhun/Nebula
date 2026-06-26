@@ -572,6 +572,48 @@ function setupSplitDivider(app: HTMLElement | null, editor: HTMLElement): void {
   });
 }
 
+/** The preview-corner grip: a plain click pops the live preview out into its
+ * own window; a drag tears it out with a ghost card following the cursor and a
+ * "release to pop out" hint, popping out on release past a small threshold. */
+function setupPreviewPopout(grip: HTMLElement | null): void {
+  if (!grip) return;
+  grip.addEventListener("pointerdown", (e: PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    let ghost: HTMLElement | null = null;
+    const preview = document.getElementById("preview");
+
+    const makeGhost = () => {
+      const g = document.createElement("div");
+      g.textContent = "⤢  放開以彈出即時預覽";
+      g.style.cssText =
+        "position:fixed;z-index:99999;pointer-events:none;padding:8px 12px;" +
+        "border-radius:8px;background:rgba(74,158,255,0.92);color:#fff;" +
+        "font:13px -apple-system,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,0.3);";
+      document.body.appendChild(g);
+      if (preview) preview.style.opacity = "0.45";
+      return g;
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      const moved = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+      if (moved > 6 && !ghost) ghost = makeGhost();
+      if (ghost) { ghost.style.left = `${ev.clientX + 14}px`; ghost.style.top = `${ev.clientY + 14}px`; }
+    };
+    const onUp = (ev: PointerEvent) => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      ghost?.remove();
+      if (preview) preview.style.opacity = "";
+      const moved = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+      // Click (barely moved) OR a deliberate drag both pop out.
+      if (moved <= 6 || moved > 24) postToHost({ type: "popoutPreview" });
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  });
+}
+
 function boot(): void {
   appEl = document.getElementById("app");
   const parent = document.getElementById("editor");
@@ -580,10 +622,9 @@ function boot(): void {
 
   setupSplitDivider(appEl, parent);
 
-  // Pop-out button on the preview corner → detach the live preview window.
-  document.getElementById("np-preview-popout")?.addEventListener("click", () => {
-    postToHost({ type: "popoutPreview" });
-  });
+  // Pop-out grip on the preview corner — click OR drag it out to detach the
+  // live preview window (the drag shows a ghost card following the cursor).
+  setupPreviewPopout(document.getElementById("np-preview-popout"));
 
   // Drag an image file onto the editor/preview → send bytes to native, which
   // saves it into the vault and inserts `![[name]]`. (Done in JS because the
