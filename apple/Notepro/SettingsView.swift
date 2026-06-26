@@ -19,6 +19,8 @@ extension Notification.Name {
     static let noteproOpenTranscribe = Notification.Name("NoteproOpenTranscribe")
     static let noteproOpenLiterature = Notification.Name("NoteproOpenLiterature")
     static let noteproOpenCowork = Notification.Name("NoteproOpenCowork")
+    static let noteproOpenInSplit = Notification.Name("NoteproOpenInSplit")   // userInfo["url"]: URL
+    static let noteproOpenInNewTab = Notification.Name("NoteproOpenInNewTab") // userInfo["url"]: URL
 }
 
 /// Default editable AI presets ("label | instruction" per line).

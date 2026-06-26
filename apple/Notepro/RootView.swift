@@ -136,6 +136,17 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTranscribe)) { _ in modal = .transcribe }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLiterature)) { _ in modal = .literature }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenCowork)) { _ in modal = .cowork }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenInSplit)) { note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            tabs.splitOn = true
+            tabs.secondary.vaultRoot = vault.rootURL
+            tabs.secondary.open(url)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenInNewTab)) { note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            selection = [url]
+            tabs.open(url, inNewTab: true)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSemantic)) { _ in modal = .semantic }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
             modal = .palette(note.userInfo?["mode"] as? String ?? "files",
@@ -582,6 +593,16 @@ struct VaultSidebar: View {
     private func fileMenu(_ node: FileNode) -> some View {
         let dir = node.url.deletingLastPathComponent()
         Button(LZ("開啟")) { selection = [node.url] }
+        if node.url.pathExtension.lowercased() != "pdf" {
+            Button(LZ("在右側並排開啟")) {
+                NotificationCenter.default.post(name: .noteproOpenInSplit, object: nil,
+                                                userInfo: ["url": node.url])
+            }
+            Button(LZ("在新分頁開啟")) {
+                NotificationCenter.default.post(name: .noteproOpenInNewTab, object: nil,
+                                                userInfo: ["url": node.url])
+            }
+        }
         if node.url.pathExtension.lowercased() == "md", let p = project(for: dir) {
             if node.paperIndex != nil {
                 Button("上移章節") { moveChapter(p, node.name, by: -1) }
