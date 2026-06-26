@@ -96,6 +96,13 @@ final class EditorModel: ObservableObject, Identifiable {
     private(set) var currentURL: URL?
     private var webReady = false
     private var pendingOpenURL: URL?   // open() called before the WebView booted
+
+    /// Mirror (pop-out preview) plumbing. A mirror editor is read-only — it
+    /// never saves or re-broadcasts, so source↔mirror can't loop. The source
+    /// only bothers broadcasting while at least one mirror window is open.
+    var isMirror = false
+    static var mirrorCount = 0
+    private var mirrorWork: DispatchWorkItem?
     private var previewWork: DispatchWorkItem?
 
     /// SyncTeX forward target: which PDF page + box to highlight when the
@@ -366,10 +373,13 @@ final class EditorModel: ObservableObject, Identifiable {
             statusText = currentURL?.lastPathComponent ?? "新文件 Untitled"
             // A file requested before the WebView booted — load it now.
             if let p = pendingOpenURL { pendingOpenURL = nil; open(p) }
+            if let t = pendingMirrorText { pendingMirrorText = nil; setContent(t) }
         case "dirty":
+            guard !isMirror else { break }   // mirror previews are read-only
             statusText = "已編輯 • \(currentURL?.lastPathComponent ?? "Untitled")"
             if latexPreviewVisible { scheduleLatexPreview() }
             scheduleAutoSave()
+            scheduleMirrorBroadcast()
         case "loaded":
             statusText = currentURL?.lastPathComponent ?? "新文件 Untitled"
             refreshProperties()
@@ -856,6 +866,29 @@ final class EditorModel: ObservableObject, Identifiable {
             }
         }
     }
+
+    // MARK: - Mirror (pop-out live preview) broadcast
+
+    /// Debounced (400ms) push of the live buffer to any open preview windows.
+    private func scheduleMirrorBroadcast() {
+        guard EditorModel.mirrorCount > 0, let url = currentURL else { return }
+        mirrorWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.getContent { text in
+                NotificationCenter.default.post(name: .noteproMirrorContent, object: nil,
+                                                userInfo: ["url": url, "text": text])
+            }
+        }
+        mirrorWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    /// Apply mirrored content into this (read-only) preview editor's webview.
+    func applyMirrorContent(_ text: String) {
+        guard webReady else { pendingMirrorText = text; return }
+        setContent(text)
+    }
+    private var pendingMirrorText: String?
 
     // MARK: - Auto-save
 

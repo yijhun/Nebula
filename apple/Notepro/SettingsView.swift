@@ -22,6 +22,7 @@ extension Notification.Name {
     static let noteproOpenInSplit = Notification.Name("NoteproOpenInSplit")   // userInfo["url"]: URL
     static let noteproOpenInNewTab = Notification.Name("NoteproOpenInNewTab") // userInfo["url"]: URL
     static let noteproOpenInWindow = Notification.Name("NoteproOpenInWindow") // userInfo["url"]: URL
+    static let noteproMirrorContent = Notification.Name("NoteproMirrorContent") // userInfo["url": URL, "text": String]
 }
 
 /// Default editable AI presets ("label | instruction" per line).

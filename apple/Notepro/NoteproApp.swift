@@ -203,6 +203,15 @@ struct NoteproApp: App {
             }
         }
 
+        // Detached live HTML-preview windows (pop-out from split/preview).
+        WindowGroup("預覽 Preview", id: "preview", for: URL.self) { $url in
+            if let url {
+                PreviewWindowView(url: url)
+                    .environmentObject(vault)
+                    .frame(minWidth: 420, minHeight: 320)
+            }
+        }
+
         Settings {
             SettingsView()
         }

@@ -111,6 +111,7 @@ let EN: [String: String] = [
     "在 Finder 顯示": "Reveal in Finder", "刪除": "Delete", "複製": "Duplicate", "開啟": "Open",
     "在右側並排開啟": "Open in Split (right)", "在新分頁開啟": "Open in New Tab",
     "在新視窗開啟": "Open in New Window", "筆記 Note": "Note",
+    "即時預覽彈出視窗": "Pop out live preview", "預覽 Preview": "Preview",
     // Toolbar tooltips / labels
     "快速開啟": "Quick Open", "搜尋": "Search", "問筆記": "Ask Notes", "讀 PDF": "Read PDF", "檢查": "Check",
     "轉 LaTeX": "To LaTeX", "回 Markdown": "Back to Markdown", "匯出 PDF": "Export PDF",
