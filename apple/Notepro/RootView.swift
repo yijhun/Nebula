@@ -1684,6 +1684,11 @@ struct PreviewWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteproMirrorContent)) { note in
             guard let u = note.userInfo?["url"] as? URL, u == url,
                   let text = note.userInfo?["text"] as? String else { return }
+            let src = note.userInfo?["sourceID"] as? String
+            // Lock onto the first source that sends content for this file, so a
+            // second editor showing the same file can't hijack the mirror.
+            if editor.mirrorSourceID == nil { editor.mirrorSourceID = src }
+            guard editor.mirrorSourceID == src else { return }
             editor.applyMirrorContent(text)
         }
         .navigationTitle("\(editor.displayName) — 預覽")

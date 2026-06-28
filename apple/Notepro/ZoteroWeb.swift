@@ -55,10 +55,12 @@ enum ZoteroWeb {
                           let d = entry["data"] as? [String: Any] else { continue }
                     let title = d["title"] as? String ?? ""
                     if title.isEmpty { continue }
-                    let ck = derivedCitekey(from: d)
-                    cacheQueue.sync { keyCache[ck] = itemKey }
+                    let info = citekeyInfo(from: d)
+                    // Only cache pinned (real BBT) keys; synthesized keys can
+                    // collide and would map one citekey to the wrong item.
+                    if info.pinned { cacheQueue.sync { keyCache[info.key] = itemKey } }
                     items.append(ZoteroItem(
-                        citekey: ck,
+                        citekey: info.key,
                         title: title,
                         authors: creatorString(d["creators"]),
                         year: yearOf(d["date"])
@@ -147,14 +149,20 @@ enum ZoteroWeb {
 
     // MARK: Field helpers
 
-    /// Pull a BBT citation key from the extra field, else synthesize one.
     private static func derivedCitekey(from data: [String: Any]) -> String {
+        citekeyInfo(from: data).key
+    }
+
+    /// Pull a BBT citation key from the extra field (pinned=true), else
+    /// synthesize one (pinned=false). Only pinned keys are unique enough to
+    /// cache for export — synthesized keys can collide across items.
+    private static func citekeyInfo(from data: [String: Any]) -> (key: String, pinned: Bool) {
         if let extra = data["extra"] as? String {
             for line in extra.components(separatedBy: "\n") {
                 if let r = line.range(of: #"(?i)^\s*(citation key|tex\.citationkey)\s*:\s*"#,
                                       options: .regularExpression) {
                     let key = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
-                    if !key.isEmpty { return key }
+                    if !key.isEmpty { return (key, true) }
                 }
             }
         }
@@ -166,7 +174,7 @@ enum ZoteroWeb {
         let year = yearOf(data["date"])
         let word = (data["title"] as? String)?.components(separatedBy: " ").first { $0.count > 3 } ?? ""
         let raw = "\(surname)\(year)\(word)"
-        return String(raw.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }).lowercased()
+        return (String(raw.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }).lowercased(), false)
     }
 
     private static func creatorString(_ any: Any?) -> String {

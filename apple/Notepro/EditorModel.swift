@@ -102,6 +102,9 @@ final class EditorModel: ObservableObject, Identifiable {
     /// only bothers broadcasting while at least one mirror window is open.
     var isMirror = false
     static var mirrorCount = 0
+    /// On a mirror: the id of the source editor it locked onto (so a dblclick
+    /// jump goes back to that exact editor, not every tab showing the file).
+    var mirrorSourceID: String?
     private var mirrorWork: DispatchWorkItem?
     private var previewWork: DispatchWorkItem?
 
@@ -211,8 +214,11 @@ final class EditorModel: ObservableObject, Identifiable {
             forName: .noteproMirrorJump, object: nil, queue: .main
         ) { [weak self] note in
             guard let self, !self.isMirror,
-                  let url = note.userInfo?["url"] as? URL, url == self.currentURL,
                   let line = note.userInfo?["line"] as? Int else { return }
+            // Match the exact source the mirror locked onto so only one editor
+            // jumps (avoids every tab with this file fighting for key window).
+            let targetID = note.userInfo?["targetID"] as? String ?? ""
+            guard targetID == self.id.uuidString else { return }
             self.webView?.evaluateJavaScript("window.notepro.jumpToLine(\(line))")
             self.webView?.window?.makeKeyAndOrderFront(nil)
         }
@@ -377,10 +383,11 @@ final class EditorModel: ObservableObject, Identifiable {
         }
         if type == "previewJump" {
             // Only meaningful from a popped-out preview: route the jump to the
-            // source editor showing the same file in the main window.
+            // exact source editor this mirror locked onto.
             if isMirror, let url = currentURL, let line = body["line"] as? Int {
                 NotificationCenter.default.post(name: .noteproMirrorJump, object: nil,
-                                                userInfo: ["url": url, "line": line])
+                                                userInfo: ["url": url, "line": line,
+                                                           "targetID": mirrorSourceID ?? ""])
             }
             return
         }
@@ -804,12 +811,14 @@ final class EditorModel: ObservableObject, Identifiable {
         if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         if let noteListObserver { NotificationCenter.default.removeObserver(noteListObserver) }
         if let mirrorJumpObserver { NotificationCenter.default.removeObserver(mirrorJumpObserver) }
-        // Best-effort cleanup of the hidden in-place preview artifacts.
-        if let dir = currentURL?.deletingLastPathComponent() {
-            for ext in ["pdf", "tex"] {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(".notepro-preview.\(ext)"))
-            }
-        }
+        // A force-closed preview window may never get onDisappear → decrement
+        // here too so the source doesn't keep broadcasting forever.
+        if isMirror { EditorModel.mirrorCount = max(0, EditorModel.mirrorCount - 1) }
+        previewWork?.cancel(); autoSaveWork?.cancel(); mirrorWork?.cancel(); syncTexWork?.cancel()
+        // NOTE: deliberately do NOT delete the hidden `.notepro-preview.*`
+        // artifacts here — they're shared per-folder, so another editor open
+        // on a sibling note may still be using them. They're hidden, gitignored,
+        // and overwritten on the next preview compile.
     }
 
     private func applyMode() {
@@ -902,10 +911,11 @@ final class EditorModel: ObservableObject, Identifiable {
     private func scheduleMirrorBroadcast() {
         guard EditorModel.mirrorCount > 0, let url = currentURL else { return }
         mirrorWork?.cancel()
+        let sourceID = id.uuidString
         let work = DispatchWorkItem { [weak self] in
             self?.getContent { text in
                 NotificationCenter.default.post(name: .noteproMirrorContent, object: nil,
-                                                userInfo: ["url": url, "text": text])
+                                                userInfo: ["url": url, "text": text, "sourceID": sourceID])
             }
         }
         mirrorWork = work

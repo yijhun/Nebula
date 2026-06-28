@@ -579,6 +579,9 @@ function setupPreviewPopout(grip: HTMLElement | null): void {
   if (!grip) return;
   grip.addEventListener("pointerdown", (e: PointerEvent) => {
     e.preventDefault();
+    // Capture so a pointerup released over the WebKit-swallowed preview
+    // subview still reaches us (otherwise the ghost can get stranded).
+    try { grip.setPointerCapture(e.pointerId); } catch { /* ok */ }
     const startX = e.clientX, startY = e.clientY;
     let ghost: HTMLElement | null = null;
     const preview = document.getElementById("preview");
