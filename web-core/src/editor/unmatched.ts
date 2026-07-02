@@ -150,6 +150,10 @@ export function unmatchedBrackets(modeRef: ModeRef) {
       if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view);
     }
     build(view: EditorView): DecorationSet {
+      // Per-keystroke budget: the scan is ~10ms/MB, fine for any real paper,
+      // but a pathological multi-MB doc shouldn't pay it on every keystroke —
+      // the debounced linter still reports issues there.
+      if (view.state.doc.length > 2_000_000) return Decoration.none;
       const doc = view.state.doc.toString();
       const positions = scanUnmatched(doc, modeRef.get());
       const sorted = [...new Set(positions)].sort((a, b) => a - b);

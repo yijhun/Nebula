@@ -351,15 +351,31 @@ function buildDecorations(state: EditorState): DecorationSet {
  * so image widgets re-resolve their npimg:// src). */
 export const refreshLivePreview = StateEffect.define<void>();
 
-const livePreviewField = StateField.define<DecorationSet>({
-  create: (state) => buildDecorations(state),
+function activeKey(state: EditorState): string {
+  return [...activeLineSet(state)].sort((a, b) => a - b).join(",");
+}
+
+/** Field value carries the active-line key its decorations were built for, so
+ * a selection-only transaction that stays on the same line(s) — the most
+ * common cursor movement — skips the whole-doc rebuild. (Stored in the field
+ * value, not module state: each editor instance has its own field.) */
+interface LP { deco: DecorationSet; key: string }
+
+const livePreviewField = StateField.define<LP>({
+  create: (state) => ({ deco: buildDecorations(state), key: activeKey(state) }),
   update(value, tr) {
-    if (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(refreshLivePreview))) {
-      return buildDecorations(tr.state);
+    const forced = tr.effects.some((e) => e.is(refreshLivePreview));
+    if (tr.docChanged || forced) {
+      return { deco: buildDecorations(tr.state), key: activeKey(tr.state) };
+    }
+    if (tr.selection) {
+      const key = activeKey(tr.state);
+      if (key === value.key) return value;   // same lines touched → reuse
+      return { deco: buildDecorations(tr.state), key };
     }
     return value;
   },
-  provide: (f) => EditorView.decorations.from(f),
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
 
 function postToHost(msg: unknown): void {

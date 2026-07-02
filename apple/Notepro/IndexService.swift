@@ -36,38 +36,56 @@ final class IndexService: ObservableObject {
     @Published private(set) var entries: [IndexEntry] = []
     private var builtRoot: URL?
     private var builtCount = -1
+    /// Off-main build queue + a generation counter so a stale build finishing
+    /// late can't clobber a newer one.
+    private let buildQueue = DispatchQueue(label: "nebula.index", qos: .utility)
+    private var generation = 0
 
     /// Rebuild only if the vault changed since last build (cheap to call often).
     func buildIfNeeded(_ vault: VaultModel) {
         let files = Self.flatten(vault.tree)
         if vault.rootURL == builtRoot, files.count == builtCount, !entries.isEmpty { return }
-        build(files: files)
-        builtRoot = vault.rootURL
-        builtCount = files.count
+        schedule(files: files, root: vault.rootURL)
     }
 
     func forceRebuild(_ vault: VaultModel) {
-        let files = Self.flatten(vault.tree)
-        build(files: files)
-        builtRoot = vault.rootURL
-        builtCount = files.count
+        schedule(files: Self.flatten(vault.tree), root: vault.rootURL)
     }
 
-    private func build(files: [URL]) {
-        entries = files.map { url in
-            let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
-                ?? Date.distantPast
-            return IndexEntry(
-                url: url,
-                title: Self.title(content, url),
-                content: content,
-                tags: Self.parseTags(content),
-                links: Self.parseLinks(content),
-                category: Self.parseFrontmatterValue(content, key: "category"),
-                mtime: mtime ?? Date.distantPast,
-                properties: Self.parseFrontmatter(content)
-            )
+    /// Incremental + off-main. The FSWatcher fires on every save (autosave =
+    /// every ~2s while typing); the old code re-READ every file in the vault
+    /// synchronously on the main thread each time — a repeating I/O storm and
+    /// the app's single biggest typing-lag source. Now: files whose mtime is
+    /// unchanged reuse their already-parsed entry; only changed/new files are
+    /// read, and all of it happens on a background queue.
+    private func schedule(files: [URL], root: URL?) {
+        generation += 1
+        let gen = generation
+        let previous = Dictionary(entries.map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
+        builtRoot = root
+        builtCount = files.count
+        buildQueue.async { [weak self] in
+            let fm = FileManager.default
+            let built: [IndexEntry] = files.map { url in
+                let mtime = ((try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)
+                    ?? Date.distantPast
+                if let old = previous[url], old.mtime == mtime { return old }
+                let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+                return IndexEntry(
+                    url: url,
+                    title: Self.title(content, url),
+                    content: content,
+                    tags: Self.parseTags(content),
+                    links: Self.parseLinks(content),
+                    category: Self.parseFrontmatterValue(content, key: "category"),
+                    mtime: mtime,
+                    properties: Self.parseFrontmatter(content)
+                )
+            }
+            DispatchQueue.main.async {
+                guard let self, gen == self.generation else { return }
+                self.entries = built
+            }
         }
     }
 
