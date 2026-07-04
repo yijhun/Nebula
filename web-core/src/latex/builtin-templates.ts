@@ -56,11 +56,51 @@ const APJ = `% Notepro template: apj (AASTeX / ApJ)
 \\end{document}
 `;
 
+// MNRAS. The class embeds its own natbib macros — it must be loaded with the
+// `usenatbib` class option (NOT \usepackage{natbib}, which clashes on
+// \bibhang). Title/author go BEFORE \begin{document}. Verified to compile in
+// the Tectonic bundle.
+const MNRAS = `% Nebula template: mnras (Monthly Notices of the RAS)
+\\documentclass[fleqn,usenatbib]{mnras}
+{{PREAMBLE}}
+\\title{{{TITLE}}}
+\\author{{{AUTHOR}}}
+\\pubyear{\\the\\year}
+\\begin{document}
+\\label{firstpage}
+\\maketitle
+{{BODY}}
+{{BIB}}
+\\label{lastpage}
+\\end{document}
+`;
+
+// Astronomy & Astrophysics. NOTE: aa.cls is NOT in the Tectonic bundle — the
+// generated .tex is submission-correct, but compiling locally requires
+// installing aa.cls (journal provides it). \abstract must precede \maketitle.
+const AANDA = `% Nebula template: aanda (Astronomy & Astrophysics)
+% 本機編譯需自行安裝 aa.cls（期刊官網提供）；投稿時期刊端可直接編譯。
+\\documentclass{aa}
+\\usepackage{natbib}
+{{PREAMBLE}}
+\\title{{{TITLE}}}
+\\author{{{AUTHOR}}}
+\\institute{~}
+\\abstract{}{}{}{}{}
+\\begin{document}
+\\maketitle
+{{BODY}}
+{{BIB}}
+\\end{document}
+`;
+
 /** Placeholder-based templates for Markdown→LaTeX conversion. */
 export const CONVERTER_TEMPLATES: Record<string, string> = {
   article: ARTICLE,
   academic: ACADEMIC,
   apj: APJ,
+  mnras: MNRAS,
+  aanda: AANDA,
 };
 
 // --- standalone, ready-to-edit skeletons for "New LaTeX from template" -------
@@ -138,6 +178,69 @@ Your introduction, with math such as $E = mc^2$ and references
 \\end{document}
 `;
 
+const SKELETON_MNRAS = `% Monthly Notices of the RAS — mnras class (in the Tectonic bundle).
+% natbib comes from the class option \`usenatbib\` (do NOT \\usepackage{natbib}).
+\\documentclass[fleqn,usenatbib]{mnras}
+\\usepackage{amsmath}
+\\usepackage{graphicx}
+
+\\title[Short title]{Title of the Paper}
+\\author[F. Author]{First Author$^{1}$\\thanks{E-mail: you@example.edu}
+\\\\ $^{1}$Institution Name}
+\\pubyear{2026}
+
+\\begin{document}
+\\label{firstpage}
+\\maketitle
+
+\\begin{abstract}
+Abstract text goes here.
+\\end{abstract}
+
+\\begin{keywords}
+stars: formation -- ISM: clouds
+\\end{keywords}
+
+\\section{Introduction} \\label{sec:intro}
+Your introduction, with math such as $E = mc^2$ and references \\citep{key2024}.
+
+% \\bibliographystyle{mnras}
+% \\bibliography{references}
+
+\\label{lastpage}
+\\end{document}
+`;
+
+const SKELETON_AANDA = `% Astronomy & Astrophysics — aa class.
+% 注意：aa.cls 不在 Tectonic bundle 裡，本機編譯需自行安裝（期刊官網提供）。
+\\documentclass{aa}
+\\usepackage{amsmath}
+\\usepackage{graphicx}
+\\usepackage{natbib}
+
+\\title{Title of the Paper}
+\\author{First Author \\inst{1}}
+\\institute{Institution Name \\email{you@example.edu}}
+
+\\abstract
+{Context.}
+{Aims.}
+{Methods.}
+{Results.}
+{Conclusions.}
+
+\\begin{document}
+\\maketitle
+
+\\section{Introduction} \\label{sec:intro}
+Your introduction, with references \\citep{key2024}.
+
+% \\bibliographystyle{aa}
+% \\bibliography{references}
+
+\\end{document}
+`;
+
 const SKELETON_BEAMER = `\\documentclass{beamer}
 \\usetheme{default}
 \\usepackage{ctex}
@@ -171,6 +274,8 @@ export const NEW_TEX_SKELETONS: TemplateInfo[] = [
   { id: "article", label: "Article", skeleton: SKELETON_ARTICLE },
   { id: "academic", label: "Academic (A4)", skeleton: SKELETON_ACADEMIC },
   { id: "apj", label: "ApJ (AASTeX)", skeleton: SKELETON_APJ },
+  { id: "mnras", label: "MNRAS", skeleton: SKELETON_MNRAS },
+  { id: "aanda", label: "A&A", skeleton: SKELETON_AANDA },
   { id: "beamer", label: "Beamer (Slides)", skeleton: SKELETON_BEAMER },
 ];
 

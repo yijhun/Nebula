@@ -225,6 +225,17 @@
         color: #1d1f23;
       }
       body.np-dark #preview .np-tex-source { color: #c8ccd4; }
+      /* Inline ```chart blocks — theme-aware axis/tick/grid colors. */
+      .np-chart-wrap { margin: 12px 0; }
+      .np-chart { max-width: 100%; height: auto; }
+      .np-chart-title { font-size: 14px; font-weight: 600; fill: currentColor; }
+      .np-chart-tick { font-size: 10px; fill: currentColor; opacity: 0.65; }
+      .np-chart-axis { stroke: currentColor; stroke-opacity: 0.55; }
+      .np-chart-grid { stroke: currentColor; stroke-opacity: 0.12; }
+      .np-chart-error {
+        color: #dc2626; font-size: 12px; padding: 8px;
+        border: 1px dashed #dc2626; border-radius: 6px;
+      }
       #preview .np-cite {
         color: #2563eb;
         background: #eef2ff;

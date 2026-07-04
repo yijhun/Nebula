@@ -19,6 +19,7 @@ import type { Root, Text } from "mdast";
 import { extractLatexBlocks, splitOnLatexPlaceholders, type ExtractedBlock } from "../latex/parser.js";
 import { noteExists } from "./notes.js";
 import { tex2svg } from "./mathjax.js";
+import { renderChart } from "./chart.js";
 
 /** Matches a `[@key]`, `[@a; @b]`, `[@key, p. 5]` citation group. */
 const CITE_RE = /\[([^\]\[\n]*@[^\]\n]*)\]/g;
@@ -99,6 +100,32 @@ function rehypeCachedMathjax() {
         ?.map((c) => c.value ?? "").join("") ?? "";
       const frag = fromHtml(tex2svg(tex, display), { fragment: true });
       node.children = frag.children as unknown[];
+    });
+  };
+}
+
+/** Render ```chart code blocks into inline SVG charts (see chart.ts). */
+function rehypeCharts() {
+  return (tree: unknown) => {
+    visit(tree as Root, "element", (node: Record<string, unknown>, index, parent) => {
+      const par = parent as unknown as { children: unknown[] } | null;
+      if (node.tagName !== "pre" || !par || index == null) return;
+      const children = node.children as Array<Record<string, unknown>> | undefined;
+      const code = children?.find((c) => c.tagName === "code");
+      const cls = (code?.properties as { className?: unknown })?.className;
+      const list = Array.isArray(cls) ? (cls as string[]) : [];
+      if (!list.includes("language-chart")) return;
+      const src = ((code?.children as Array<{ value?: string }>) ?? [])
+        .map((c) => c.value ?? "").join("");
+      const frag = fromHtml(renderChart(src), { fragment: true });
+      const props = node.properties as Record<string, unknown> | undefined;
+      par.children[index] = {
+        type: "element",
+        tagName: "div",
+        properties: { className: ["np-chart-wrap"], dataLine: props?.["dataLine"] },
+        children: frag.children,
+      };
+      return SKIP;
     });
   };
 }
@@ -258,6 +285,7 @@ const processor: Processor = unified()
   .use(remarkCitations)
   .use(remarkRehype)
   .use(rehypeSourceLines)
+  .use(rehypeCharts)
   .use(rehypeImgSrc)
   .use(rehypeCachedMathjax)
   .use(rehypeStringify) as unknown as Processor;

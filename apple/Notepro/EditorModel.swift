@@ -70,6 +70,9 @@ final class EditorModel: ObservableObject, Identifiable {
     var vaultRoot: URL? { didSet { pushBasePaths() } }
 
     @Published var statusText: String = "就緒 Ready"
+    /// Unsaved-changes indicator (dot on the tab chip). Set on edit, cleared
+    /// on save / open.
+    @Published var isDirty: Bool = false
     /// Live word count of the current document (pushed from the web core).
     @Published private(set) var wordCount: Int = 0
     @Published var isExporting: Bool = false
@@ -411,6 +414,7 @@ final class EditorModel: ObservableObject, Identifiable {
             if let t = pendingMirrorText { pendingMirrorText = nil; setContent(t) }
         case "dirty":
             guard !isMirror else { break }   // mirror previews are read-only
+            isDirty = true
             statusText = "已編輯 • \(currentURL?.lastPathComponent ?? "Untitled")"
             if latexPreviewVisible { scheduleLatexPreview() }
             scheduleAutoSave()
@@ -499,6 +503,16 @@ final class EditorModel: ObservableObject, Identifiable {
     /// Menu-invoked: open the AI overlay / Zotero cite picker in this editor.
     func triggerAI() { webView?.evaluateJavaScript("window.notepro.ai()") }
     func triggerCite() { webView?.evaluateJavaScript("window.notepro.cite()") }
+
+    /// Run a Markdown-table command at the cursor (insert/delete row/col …).
+    func tableOp(_ op: String) {
+        let safe = op.filter { $0.isLetter }
+        webView?.evaluateJavaScript("window.notepro.tableOp('\(safe)')") { [weak self] result, _ in
+            if (result as? String) == "no-table" {
+                self?.statusText = "游標不在表格內（先點進一個 Markdown 表格）"
+            }
+        }
+    }
 
     /// Open the citation under the cursor in Zotero (Better BibTeX select URI).
     func openCiteAtCursorInZotero() {
@@ -846,6 +860,7 @@ final class EditorModel: ObservableObject, Identifiable {
             displayName = url.lastPathComponent
             docMode = Self.mode(for: url)
             previewPDF = nil
+            isDirty = false
             pushBasePaths()   // BEFORE setContent so Live Preview image widgets resolve
             setContent(text)
             applyMode()
@@ -896,6 +911,7 @@ final class EditorModel: ObservableObject, Identifiable {
             guard let self else { return }
             do {
                 try text.write(to: url, atomically: true, encoding: .utf8)
+                self.isDirty = false
                 self.displayName = url.lastPathComponent
                 self.statusText = "已儲存 \(url.lastPathComponent)"
                 HistoryStore.snapshot(root: self.vaultRoot, file: url, content: text) // revision history
@@ -1209,6 +1225,79 @@ final class EditorModel: ObservableObject, Identifiable {
 
     /// Export the flattened single-file paper (`paper-flat.tex` + `references.bib`)
     /// to a user-chosen folder, for journal submission.
+    /// Pre-submission checks on a compiled project (flat tex + cited bib).
+    /// Returns human-readable issues; empty = ready to submit.
+    func submissionIssues(_ project: Project) -> [String] {
+        guard let tex = try? String(contentsOf: project.flatTex, encoding: .utf8) else {
+            return ["尚未編譯（沒有攤平檔）— 先按「編譯論文」"]
+        }
+        var issues: [String] = []
+        func has(_ pattern: String) -> Bool {
+            tex.range(of: pattern, options: .regularExpression) != nil
+        }
+        if !has(#"\\title(\[[^\]]*\])?\{[^}]"#) { issues.append("缺標題：\\title{…} 是空的或不存在") }
+        if !has(#"\\author(\[[^\]]*\])?\{[^}]"#) { issues.append("缺作者：\\author{…} 是空的或不存在") }
+        if !has(#"\\begin\{abstract\}"#) && !has(#"\\abstract\{"#) {
+            issues.append("缺摘要（\\begin{abstract} 或 \\abstract）")
+        }
+        // Cited keys that aren't in the generated references.bib.
+        let bib = (try? String(contentsOf: project.buildDir.appendingPathComponent("references.bib"),
+                               encoding: .utf8)) ?? ""
+        var bibKeys = Set<String>()
+        if let re = try? NSRegularExpression(pattern: #"@\w+\s*\{\s*([^,\s]+)"#) {
+            let ns = bib as NSString
+            for m in re.matches(in: bib, range: NSRange(location: 0, length: ns.length)) {
+                bibKeys.insert(ns.substring(with: m.range(at: 1)))
+            }
+        }
+        if let re = try? NSRegularExpression(pattern: #"\\[a-zA-Z]*cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)\}"#) {
+            let ns = tex as NSString
+            var missing = Set<String>()
+            for m in re.matches(in: tex, range: NSRange(location: 0, length: ns.length)) {
+                for part in ns.substring(with: m.range(at: 1)).components(separatedBy: ",") {
+                    let key = part.trimmingCharacters(in: .whitespaces)
+                    if !key.isEmpty, !bibKeys.contains(key) { missing.insert(key) }
+                }
+            }
+            if !missing.isEmpty {
+                issues.append("引用不在 references.bib：\(missing.sorted().joined(separator: ", "))")
+            }
+        }
+        // Figures that don't resolve anywhere in the vault.
+        if let re = try? NSRegularExpression(pattern: #"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}"#) {
+            let ns = tex as NSString
+            var missingFigs = Set<String>()
+            for m in re.matches(in: tex, range: NSRange(location: 0, length: ns.length)) {
+                let ref = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                if ImageSchemeHandler.resolve(ref: ref, base: project.folder.path,
+                                              vault: vaultRoot?.path ?? "") == nil {
+                    missingFigs.insert(ref)
+                }
+            }
+            if !missingFigs.isEmpty {
+                issues.append("找不到圖檔：\(missingFigs.sorted().joined(separator: ", "))")
+            }
+        }
+        for marker in ["TODO", "FIXME"] where tex.contains(marker) {
+            issues.append("內文還留著 \(marker) 標記")
+        }
+        return issues
+    }
+
+    /// Menu-invoked: run the pre-submission check and show the verdict.
+    func checkSubmission(_ project: Project) {
+        let issues = submissionIssues(project)
+        let alert = NSAlert()
+        if issues.isEmpty {
+            alert.messageText = "✓ 投稿前檢查通過"
+            alert.informativeText = "標題、作者、摘要、引用、圖檔都齊了。可以打包投稿。"
+        } else {
+            alert.messageText = "投稿前檢查：\(issues.count) 個問題"
+            alert.informativeText = issues.map { "• " + $0 }.joined(separator: "\n")
+        }
+        alert.runModal()
+    }
+
     /// Submission bundle: a self-contained folder with the flattened single
     /// `<name>.tex` (figure paths rewritten to flat basenames), the cited-only
     /// `references.bib`, and every referenced figure copied in. Optionally zipped.
@@ -1219,6 +1308,18 @@ final class EditorModel: ObservableObject, Identifiable {
               var tex = try? String(contentsOf: project.flatTex, encoding: .utf8) else {
             statusText = "請先編譯論文（才會產生攤平檔）"; return
         }
+        // Pre-flight: surface missing title/abstract/citations/figures before
+        // bundling — the human-friendly moment to catch them.
+        let issues = submissionIssues(project)
+        if !issues.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "投稿前檢查發現 \(issues.count) 個問題"
+            alert.informativeText = issues.map { "• " + $0 }.joined(separator: "\n")
+            alert.addButton(withTitle: "仍要打包")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.prompt = "建立投稿資料夾於此"

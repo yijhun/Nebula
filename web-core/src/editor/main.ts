@@ -30,6 +30,7 @@ import { skeletonFor } from "../latex/builtin-templates.js";
 import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from "./preview.js";
 import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
+import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
 import { latexAutocomplete } from "./complete.js";
@@ -266,6 +267,11 @@ const api = {
   /** Jump the editor's cursor to a 1-indexed line and scroll it into view —
    * used by SyncTeX reverse (PDF click → editor) from the native shell. */
   jumpToLine(line: number): void { jumpEditorToLine(line); },
+  /** Table command at the cursor (format / insert / delete / align). Returns
+   * "ok" or "no-table" so the native menu can show a helpful status. */
+  tableOp(op: string): string {
+    return runTableOp(view, op as TableOp) ? "ok" : "no-table";
+  },
   /** The citekey at/around the cursor — from `[@key]`, `[@key; @key2]`, or
    * `\cite{key}` / `\citep{...}` etc. Returns "" if the cursor isn't on one.
    * Used by "open in Zotero". */

@@ -13,6 +13,13 @@ import {
   type TemplateFields,
 } from "./templates.js";
 import { CONVERTER_TEMPLATES } from "./builtin-templates.js";
+
+/** Journal templates that require natbib citations, and their `.bst` style. */
+export const NATBIB_TEMPLATES: Record<string, string> = {
+  apj: "aasjournal",
+  mnras: "mnras",
+  aanda: "aa",
+};
 import { escapeLatex } from "./emitter.js";
 import type { Asset, ConvertOptions, ConvertResult } from "./types.js";
 
@@ -41,11 +48,12 @@ function authorField(author: string | string[] | undefined): string {
 export function convert(source: string, options: ConvertOptions = {}): ConvertResult {
   const { tree, frontmatter } = parseMarkdown(source);
 
-  // Resolve the template first: AASTeX/ApJ needs natbib citations (it rejects
-  // biblatex), so the citation style depends on the chosen template.
+  // Resolve the template first: the astronomy journal classes need natbib
+  // citations (they reject biblatex), and each has its own .bst style.
   const templateId =
     options.template ?? frontmatter.template ?? options.defaultTemplate ?? "article";
-  const bibMode = templateId === "apj" ? "natbib" : "biblatex";
+  const natbibStyle = NATBIB_TEMPLATES[templateId];
+  const bibMode = natbibStyle ? "natbib" : "biblatex";
 
   const { body, citationKeys, assets, features } = emit(tree, { citeStyle: bibMode });
 
@@ -89,7 +97,7 @@ export function convert(source: string, options: ConvertOptions = {}): ConvertRe
     date,
     body,
     bib: features.has("natbib")
-      ? "\\bibliographystyle{aasjournal}\n\\bibliography{references}"
+      ? `\\bibliographystyle{${natbibStyle ?? "aasjournal"}}\n\\bibliography{references}`
       : features.has("biblatex") ? "\\printbibliography" : "",
   };
 

@@ -21,7 +21,7 @@ import { buildPreamble } from "./preamble.js";
 import { buildBib } from "./bib.js";
 import { fillTemplate, resolveTemplate, type TemplateFields } from "./templates.js";
 import { CONVERTER_TEMPLATES } from "./builtin-templates.js";
-import { containsCJK } from "./index.js";
+import { containsCJK, NATBIB_TEMPLATES } from "./index.js";
 
 export interface ProjectChapterInput {
   /** Source filename, e.g. "01-intro.md". */
@@ -79,7 +79,8 @@ export function convertProject(
   let firstDate: string | undefined;
 
   const templateId = options.template ?? "article";
-  const bibMode = templateId === "apj" ? "natbib" : "biblatex";
+  const natbibStyle = NATBIB_TEMPLATES[templateId];
+  const bibMode = natbibStyle ? "natbib" : "biblatex";
 
   for (const ch of chapters) {
     const { tree, frontmatter } = parseMarkdown(ch.md);
@@ -120,7 +121,7 @@ export function convertProject(
       : firstDate ? escapeLatex(firstDate) : "\\today";
 
   const bibField = features.has("natbib")
-    ? "\\bibliographystyle{aasjournal}\n\\bibliography{references}"
+    ? `\\bibliographystyle{${natbibStyle ?? "aasjournal"}}\n\\bibliography{references}`
     : features.has("biblatex") ? "\\printbibliography" : "";
 
   const inputBody = outputs

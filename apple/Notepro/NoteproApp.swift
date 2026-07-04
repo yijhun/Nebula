@@ -112,6 +112,19 @@ struct NoteproApp: App {
                 Button(LZ("在 Zotero 開啟此引用")) { focusedEditor?.openCiteAtCursorInZotero() }
                     .keyboardShortcut("k", modifiers: [.command, .option, .shift])
                     .disabled(focusedEditor == nil)
+                Divider()
+                Menu(LZ("表格 Table")) {
+                    Button(LZ("格式化表格")) { focusedEditor?.tableOp("format") }
+                    Divider()
+                    Button(LZ("下方插入列")) { focusedEditor?.tableOp("insertRowBelow") }
+                    Button(LZ("右方插入欄")) { focusedEditor?.tableOp("insertColRight") }
+                    Divider()
+                    Button(LZ("刪除目前列")) { focusedEditor?.tableOp("deleteRow") }
+                    Button(LZ("刪除目前欄")) { focusedEditor?.tableOp("deleteCol") }
+                    Divider()
+                    Button(LZ("切換欄對齊")) { focusedEditor?.tableOp("cycleAlign") }
+                }
+                .disabled(focusedEditor == nil)
             }
             CommandGroup(replacing: .help) {
                 Button(LZ("快捷鍵 Shortcuts")) {

@@ -25,6 +25,8 @@ extension Notification.Name {
     static let noteproMirrorContent = Notification.Name("NoteproMirrorContent") // userInfo["url": URL, "text": String]
     static let noteproMirrorJump = Notification.Name("NoteproMirrorJump")       // userInfo["url": URL, "line": Int]
     static let noteproOpenPreviewWindow = Notification.Name("NoteproOpenPreviewWindow") // userInfo["url"]: URL
+    static let noteproOpenLibrary = Notification.Name("NoteproOpenLibrary")
+    static let noteproOpenSearchReplace = Notification.Name("NoteproOpenSearchReplace")
 }
 
 /// Default editable AI presets ("label | instruction" per line).
@@ -175,6 +177,8 @@ struct SettingsView: View {
                 }
                 Picker(LZ("預設 LaTeX 模板"), selection: $defaultTemplate) {
                     Text("ApJ (AASTeX)").tag("apj")
+                    Text("MNRAS").tag("mnras")
+                    Text("A&A（本機編譯需 aa.cls）").tag("aanda")
                     Text("Academic (A4)").tag("academic")
                     Text("Article").tag("article")
                 }

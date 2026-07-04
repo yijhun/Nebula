@@ -112,6 +112,29 @@ let EN: [String: String] = [
     "在右側並排開啟": "Open in Split (right)", "在新分頁開啟": "Open in New Tab",
     "在新視窗開啟": "Open in New Window", "筆記 Note": "Note",
     "即時預覽彈出視窗": "Pop out live preview", "預覽 Preview": "Preview",
+    // ⋯ menu sections + new tools
+    "研究": "Research", "視窗": "Window",
+    "文獻庫": "Literature Library", "搜尋與取代（跨檔案）": "Search & Replace (all files)",
+    "投稿前檢查": "Pre-submission Check",
+    // Table menu
+    "表格 Table": "Table", "格式化表格": "Format Table",
+    "下方插入列": "Insert Row Below", "右方插入欄": "Insert Column Right",
+    "刪除目前列": "Delete Row", "刪除目前欄": "Delete Column", "切換欄對齊": "Cycle Column Alignment",
+    // Literature library
+    "搜尋標題 / 作者 / citekey…": "Search title / author / citekey…",
+    "年份": "Year", "作者": "Author", "標題": "Title", "篇": "papers",
+    "還沒有文獻筆記": "No literature notes yet",
+    "用「找文獻 arXiv/ADS」匯入，或在 PDF 閱讀器按「建立文獻筆記」。": "Import via Find Papers (arXiv/ADS), or create one from the PDF reader.",
+    // Search & replace
+    "搜尋整個資料夾…": "Search the whole vault…",
+    "取代為…（regex 可用 $1）": "Replace with… ($1 works in regex mode)",
+    "沒有符合的結果": "No matches", "個符合": "matches",
+    "取代前會自動存版本快照": "A history snapshot is saved before replacing",
+    "取代勾選的": "Replace Checked", "已取代": "Replaced", "個檔案": "files",
+    "可從版本歷史還原": "restorable from Version History",
+    "結果太多，只顯示前 500 筆": "Too many results — showing the first 500",
+    "正則表達式無效": "Invalid regular expression",
+    "輸入關鍵字，按 Enter 搜尋。": "Type a query and press Enter.",
     // Toolbar tooltips / labels
     "快速開啟": "Quick Open", "搜尋": "Search", "問筆記": "Ask Notes", "讀 PDF": "Read PDF", "檢查": "Check",
     "轉 LaTeX": "To LaTeX", "回 Markdown": "Back to Markdown", "匯出 PDF": "Export PDF",
