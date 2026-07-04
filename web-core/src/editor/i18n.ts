@@ -46,6 +46,7 @@ const EN: Record<string, string> = {
   "/ 提示框 Callout": "/ Callout",
   "/ 程式碼": "/ Code block",
   "/ 數學公式": "/ Math block",
+  "/ 圖表": "/ Chart",
   "/ 表格": "/ Table",
   "/ 分隔線": "/ Divider",
   // Preview

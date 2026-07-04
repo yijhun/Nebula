@@ -406,6 +406,7 @@ function slashOptions(): Completion[] {
     snip("> [!note] ${}", t("/ 提示框 Callout"), "callout"),
     snip("```\n${}\n```", t("/ 程式碼"), "code block"),
     snip("$$\n${}\n$$", t("/ 數學公式"), "math block"),
+    snip("```chart\ntype: ${line}\ntitle: ${}\nx, y\n0, 1\n1, 2\n```", t("/ 圖表"), "chart"),
     snip("| ${欄1} | ${欄2} |\n| --- | --- |\n| ${} |  |", t("/ 表格"), "table"),
     snip("\n---\n", t("/ 分隔線"), "divider"),
   ];
