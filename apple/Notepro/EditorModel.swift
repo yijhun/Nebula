@@ -519,6 +519,11 @@ final class EditorModel: ObservableObject, Identifiable {
         webView?.evaluateJavaScript("window.notepro.chartStudio()")
     }
 
+    /// Open the geometry/diagram editor (points/arrows/circles → TikZ).
+    func diagramStudio() {
+        webView?.evaluateJavaScript("window.notepro.diagramStudio()")
+    }
+
     /// Translate the ```chart block at the cursor into a ```tikz block below it.
     func chartToTikz() {
         webView?.evaluateJavaScript("window.notepro.chartToTikz()") { [weak self] result, _ in

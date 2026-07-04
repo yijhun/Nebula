@@ -32,6 +32,7 @@ import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
+import { openDiagramStudio } from "./diagramStudio.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
 import { latexAutocomplete } from "./complete.js";
@@ -279,6 +280,9 @@ const api = {
   /** Translate the ```chart block at the cursor into a ```tikz block inserted
    * below it. Returns "ok" | "no-chart" | "error: …". */
   chartToTikz(): string { return insertTikzBelow(view); },
+  /** Open the geometry/diagram editor. Reopens the model when the cursor is
+   * inside a studio-generated ```tikz block; otherwise starts a new diagram. */
+  diagramStudio(): void { openDiagramStudio(view); },
   /** The citekey at/around the cursor — from `[@key]`, `[@key; @key2]`, or
    * `\cite{key}` / `\citep{...}` etc. Returns "" if the cursor isn't on one.
    * Used by "open in Zotero". */

@@ -115,6 +115,7 @@ struct NoteproApp: App {
                 Divider()
                 Menu(LZ("圖表 Chart")) {
                     Button(LZ("互動圖表編輯器")) { focusedEditor?.chartStudio() }
+                    Button(LZ("圖解編輯器（幾何示意圖）")) { focusedEditor?.diagramStudio() }
                     Button(LZ("轉成 TikZ（插在下方）")) { focusedEditor?.chartToTikz() }
                 }
                 .disabled(focusedEditor == nil)
