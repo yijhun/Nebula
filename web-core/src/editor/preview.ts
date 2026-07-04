@@ -114,10 +114,18 @@ function rehypeCharts() {
       const code = children?.find((c) => c.tagName === "code");
       const cls = (code?.properties as { className?: unknown })?.className;
       const list = Array.isArray(cls) ? (cls as string[]) : [];
-      if (!list.includes("language-chart")) return;
+      const isChart = list.includes("language-chart");
+      const isTikz = list.includes("language-tikz");
+      if (!isChart && !isTikz) return;
       const src = ((code?.children as Array<{ value?: string }>) ?? [])
         .map((c) => c.value ?? "").join("");
-      const frag = fromHtml(renderChart(src), { fragment: true });
+      // ```chart → inline SVG sketch. ```tikz → a placeholder card (the real
+      // figure is LaTeX-native; it renders in the compiled-PDF live preview
+      // and in the exported paper).
+      const html = isChart
+        ? renderChart(src)
+        : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
+      const frag = fromHtml(html, { fragment: true });
       const props = node.properties as Record<string, unknown> | undefined;
       par.children[index] = {
         type: "element",

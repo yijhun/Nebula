@@ -47,6 +47,7 @@ const EN: Record<string, string> = {
   "/ 程式碼": "/ Code block",
   "/ 數學公式": "/ Math block",
   "/ 圖表": "/ Chart",
+  "/ TikZ 圖": "/ TikZ figure",
   "/ 表格": "/ Table",
   "/ 分隔線": "/ Divider",
   // Preview

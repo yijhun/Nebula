@@ -407,6 +407,7 @@ function slashOptions(): Completion[] {
     snip("```\n${}\n```", t("/ 程式碼"), "code block"),
     snip("$$\n${}\n$$", t("/ 數學公式"), "math block"),
     snip("```chart\ntype: ${line}\ntitle: ${}\nx, y\n0, 1\n1, 2\n```", t("/ 圖表"), "chart"),
+    snip("```tikz\n\\begin{axis}[xlabel={${x}}, ylabel={${y}}]\n\t\\addplot coordinates {(0,1) (1,2) (2,1.5)};\n\\end{axis}\n```", t("/ TikZ 圖"), "tikz figure"),
     snip("| ${欄1} | ${欄2} |\n| --- | --- |\n| ${} |  |", t("/ 表格"), "table"),
     snip("\n---\n", t("/ 分隔線"), "divider"),
   ];

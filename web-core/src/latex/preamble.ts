@@ -63,6 +63,13 @@ export function buildPreamble(
   if (features.has("ulem")) {
     lines.push("\\usepackage[normalem]{ulem}");
   }
+  if (features.has("tikz")) {
+    lines.push("\\usepackage{tikz}");
+  }
+  if (features.has("pgfplots")) {
+    lines.push("\\usepackage{pgfplots}");
+    lines.push("\\pgfplotsset{compat=1.18}");
+  }
 
   if (opts.cjk) {
     lines.push("% --- CJK (XeLaTeX) ---");

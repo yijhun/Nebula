@@ -28,7 +28,9 @@ export type Feature =
   | "math"
   | "biblatex"
   | "natbib"
-  | "footnote";
+  | "footnote"
+  | "tikz"
+  | "pgfplots";
 
 /** Citation/bibliography style: biblatex (\autocite/\printbibliography) or
  * natbib (\citep/\bibliography — required by AASTeX/ApJ). */
@@ -273,6 +275,22 @@ function emitNode(node: RootContent | Root, ctx: EmitContext): string {
     case "inlineCode":
       return `\\texttt{${escapeLatex(node.value)}}`;
     case "code": {
+      // ```tikz blocks are REAL paper figures — pass through as LaTeX (wrapping
+      // bare drawing commands in a tikzpicture when the author omitted it).
+      if (node.lang === "tikz") {
+        ctx.features.add("tikz");
+        const val = String(node.value);
+        if (/\\begin\{axis\}/.test(val)) ctx.features.add("pgfplots");
+        const body = /\\begin\{tikzpicture\}/.test(val)
+          ? val
+          : `\\begin{tikzpicture}\n${val}\n\\end{tikzpicture}`;
+        return `${body}\n\n`;
+      }
+      // ```chart blocks are draft-only sketches (rendered in the note preview);
+      // they never belong in the paper.
+      if (node.lang === "chart") {
+        return "% [chart] 筆記草稿圖已略過（正式圖請改用 ```tikz）\n\n";
+      }
       // verbatim needs no escaping; preserve content as-is.
       const lang = node.lang ? `% language: ${node.lang}\n` : "";
       return `${lang}\\begin{verbatim}\n${node.value}\n\\end{verbatim}\n\n`;
@@ -307,6 +325,10 @@ function emitNode(node: RootContent | Root, ctx: EmitContext): string {
     case "latexBlock":
       // Raw LaTeX written in the Markdown — pass through untouched. Block
       // environments get a paragraph break; inline commands stay inline.
+      if (/\\begin\{tikzpicture\}/.test(node.value)) {
+        ctx.features.add("tikz");
+        if (/\\begin\{axis\}/.test(node.value)) ctx.features.add("pgfplots");
+      }
       ctx.features.add("math");
       return node.display === false ? node.value : `${fitWideMath(node.value, ctx)}\n\n`;
     case "wikiLink":
