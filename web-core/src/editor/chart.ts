@@ -13,24 +13,26 @@
  *   log: xy               ← log axes: x | y | xy  (or xlog:/ylog: true)
  *   yflip: true           ← invert the y axis (magnitudes!)
  *   xmin/xmax/ymin/ymax: 0.1  ← optional manual ranges
+ *   param: a = 3e-23 [1e-24, 1e-22]   ← slider parameter (range optional)
+ *   plot: 模型 = a * x^0.9            ← function overlay ("name =" optional)
  *   x, flux, flux_err     ← optional header; a column ending in “err”
  *   0, 1.2, 0.1              attaches error bars to the column before it
  *   1, 2.4, 0.2
  *   ```
  *
  * First column = x; every further column is a series (unless it's an err
- * column). In log mode non-positive values are skipped.
+ * column). In log mode non-positive values are skipped. Function-only charts
+ * (no data rows) are allowed when at least one plot: is present.
  */
+import { parse as parseExpr, evaluate, freeParams, type Ast } from "./expr.js";
 
 const COLORS = ["#4a9eff", "#ff6b6b", "#51cf66", "#ffa94d", "#b197fc", "#f783ac"];
 
-interface Series {
-  name: string;
-  ys: number[];
-  errs?: number[];
-}
+export interface Series { name: string; ys: number[]; errs?: number[] }
+export interface PlotDef { name: string; exprSrc: string }
+export interface ParamDef { name: string; value: number; min: number; max: number }
 
-interface Parsed {
+export interface ChartSpec {
   type: "line" | "scatter" | "bar";
   title: string;
   xLabel: string;
@@ -41,23 +43,65 @@ interface Parsed {
   xmin?: number; xmax?: number; ymin?: number; ymax?: number;
   xs: number[];
   series: Series[];
+  plots: PlotDef[];
+  params: ParamDef[];
+  /** Raw data lines (header + numeric rows) exactly as typed — round-trips
+   * through the studio's data textarea. */
+  dataLines: string[];
 }
 
 const OPT_RE = /^(type|title|xlabel|ylabel|log|xlog|ylog|yflip|xmin|xmax|ymin|ymax)\s*[:：]\s*(.+)$/i;
+const PLOT_RE = /^plot\s*[:：]\s*(.+)$/i;
+const PARAM_RE = /^param\s*[:：]\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^[\]]+?)\s*(?:\[\s*([^,\]]+)\s*,\s*([^,\]]+)\s*\])?\s*$/i;
 const ERR_RE = /(^err$|err$|error$)/i;
 const truthy = (v: string): boolean => /^(true|1|yes|on)$/i.test(v.trim());
 
-function parseChart(src: string): Parsed | string {
+/** Default slider range for a parameter the author didn't bound. */
+export function defaultParamRange(value: number): [number, number] {
+  if (value === 0 || !Number.isFinite(value)) return [-10, 10];
+  const a = value / 10, b = value * 10;
+  return a < b ? [a, b] : [b, a];
+}
+
+export function parseChartSource(src: string): ChartSpec | string {
   const lines = src.split("\n").map((l) => l.trim()).filter(Boolean);
-  const p: Parsed = {
+  const p: ChartSpec = {
     type: "line", title: "", xLabel: "", yLabel: "",
     xlog: false, ylog: false, yflip: false,
-    xs: [], series: [],
+    xs: [], series: [], plots: [], params: [], dataLines: [],
   };
   let header: string[] | null = null;
   const rows: number[][] = [];
 
   for (const line of lines) {
+    const plot = PLOT_RE.exec(line);
+    if (plot) {
+      const body = plot[1]!.trim();
+      // "name = expr" — only when the left of the first '=' has no math.
+      const eq = body.indexOf("=");
+      if (eq > 0 && !/[-+*/^()]/.test(body.slice(0, eq))) {
+        p.plots.push({ name: body.slice(0, eq).trim(), exprSrc: body.slice(eq + 1).trim() });
+      } else {
+        p.plots.push({ name: "", exprSrc: body });
+      }
+      continue;
+    }
+    const param = PARAM_RE.exec(line);
+    if (param) {
+      const value = Number(param[2]!.trim());
+      if (Number.isFinite(value)) {
+        const [dmin, dmax] = defaultParamRange(value);
+        const min = param[3] !== undefined ? Number(param[3]) : dmin;
+        const max = param[4] !== undefined ? Number(param[4]) : dmax;
+        p.params.push({
+          name: param[1]!,
+          value,
+          min: Number.isFinite(min) ? min : dmin,
+          max: Number.isFinite(max) ? max : dmax,
+        });
+      }
+      continue;
+    }
     const opt = OPT_RE.exec(line);
     if (opt) {
       const key = opt[1]!.toLowerCase();
@@ -90,30 +134,69 @@ function parseChart(src: string): Parsed | string {
     const cells = line.split(/[,\t]|\s{2,}|\s(?=[-\d.])/).map((c) => c.trim()).filter(Boolean);
     if (!cells.length) continue;
     const nums = cells.map(Number);
-    if (nums.every((n) => Number.isFinite(n))) rows.push(nums);
-    else if (!rows.length && !header) header = cells;
+    if (nums.every((n) => Number.isFinite(n))) { rows.push(nums); p.dataLines.push(line); }
+    else if (!rows.length && !header) { header = cells; p.dataLines.push(line); }
   }
 
-  if (!rows.length) return "chart: 沒有數據列";
-  const colCount = Math.max(...rows.map((r) => r.length));
-  if (colCount < 2) return "chart: 至少要兩欄（x 與一個數列）";
-
-  p.xs = rows.map((r) => r[0] ?? 0);
-  // Column → series, folding “…err” columns into the series before them.
-  for (let c = 1; c < colCount; c++) {
-    const name = header?.[c] ?? "";
-    const col = rows.map((r) => r[c] ?? NaN);
-    if (name && ERR_RE.test(name) && p.series.length) {
-      p.series[p.series.length - 1]!.errs = col;
-    } else {
-      p.series.push({
-        name: name || (colCount > 2 ? `y${p.series.length + 1}` : ""),
-        ys: col,
-      });
+  if (!rows.length && !p.plots.length) return "chart: 沒有數據列（或至少一條 plot: 函數）";
+  if (rows.length) {
+    const colCount = Math.max(...rows.map((r) => r.length));
+    if (colCount < 2) return "chart: 至少要兩欄（x 與一個數列）";
+    p.xs = rows.map((r) => r[0] ?? 0);
+    for (let c = 1; c < colCount; c++) {
+      const name = header?.[c] ?? "";
+      const col = rows.map((r) => r[c] ?? NaN);
+      if (name && ERR_RE.test(name) && p.series.length) {
+        p.series[p.series.length - 1]!.errs = col;
+      } else {
+        p.series.push({
+          name: name || (colCount > 2 ? `y${p.series.length + 1}` : ""),
+          ys: col,
+        });
+      }
     }
+    if (!p.xLabel && header?.[0]) p.xLabel = header[0]!;
   }
-  if (!p.xLabel && header?.[0]) p.xLabel = header[0]!;
   return p;
+}
+
+/** Rebuild chart-block source from a spec (studio write-back). */
+export function serializeChart(p: ChartSpec): string {
+  const out: string[] = [];
+  out.push(`type: ${p.type}`);
+  if (p.title) out.push(`title: ${p.title}`);
+  if (p.xLabel) out.push(`xlabel: ${p.xLabel}`);
+  if (p.yLabel) out.push(`ylabel: ${p.yLabel}`);
+  if (p.xlog || p.ylog) out.push(`log: ${(p.xlog ? "x" : "") + (p.ylog ? "y" : "")}`);
+  if (p.yflip) out.push("yflip: true");
+  for (const k of ["xmin", "xmax", "ymin", "ymax"] as const) {
+    if (p[k] !== undefined) out.push(`${k}: ${p[k]}`);
+  }
+  for (const prm of p.params) {
+    out.push(`param: ${prm.name} = ${prm.value} [${prm.min}, ${prm.max}]`);
+  }
+  for (const pl of p.plots) {
+    out.push(pl.name ? `plot: ${pl.name} = ${pl.exprSrc}` : `plot: ${pl.exprSrc}`);
+  }
+  out.push(...p.dataLines);
+  return out.join("\n");
+}
+
+/** The x range (raw data units) a plot should span — data extent, manual
+ * overrides, or a sensible default for function-only charts. */
+export function chartXRange(p: ChartSpec): [number, number] {
+  const finite = p.xs.filter(Number.isFinite);
+  let a = p.xmin ?? (finite.length ? Math.min(...finite) : p.xlog ? 0.1 : 0);
+  let b = p.xmax ?? (finite.length ? Math.max(...finite) : 10);
+  if (!(a < b)) { a = p.xlog ? 0.1 : 0; b = 10; }
+  return [a, b];
+}
+
+/** Bindings for evaluating plot expressions: current param values. */
+export function paramBindings(p: ChartSpec): Record<string, number> {
+  const env: Record<string, number> = {};
+  for (const prm of p.params) env[prm.name] = prm.value;
+  return env;
 }
 
 // ── axis helpers ──────────────────────────────────────────────────────────
@@ -130,8 +213,7 @@ function linTicks(min: number, max: number, n = 5): number[] {
   return t;
 }
 
-/** Ticks for a log axis (inputs in log10 space, outputs in log10 space).
- * Integer decades when the range is wide; 2/5 mantissa fills when narrow. */
+/** Ticks for a log axis (inputs in log10 space, outputs in log10 space). */
 function logTicks(lmin: number, lmax: number): number[] {
   const t: number[] = [];
   const d0 = Math.floor(lmin), d1 = Math.ceil(lmax);
@@ -148,7 +230,6 @@ const fmt = (v: number): string =>
   Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3)
     ? v.toExponential(1) : String(Math.round(v * 1000) / 1000);
 
-/** Format a log-space tick as its real value (10^n decades stay readable). */
 const fmtLog = (lv: number): string => {
   const v = Math.pow(10, lv);
   const near = Math.round(lv);
@@ -161,32 +242,67 @@ const esc = (s: string): string =>
 
 // ── renderer ──────────────────────────────────────────────────────────────
 
+const SAMPLES = 160;
+
 /** Render a ```chart block to an SVG string (or an error message div). */
 export function renderChart(src: string): string {
-  const p = parseChart(src);
+  const p = parseChartSource(src);
   if (typeof p === "string") {
     return `<div class="np-chart-error">${esc(p)}</div>`;
   }
+
+  // Compile plot expressions (collect readable errors instead of dying).
+  const env = paramBindings(p);
+  const compiled: Array<{ name: string; ast: Ast }> = [];
+  const errors: string[] = [];
+  for (const pl of p.plots) {
+    try {
+      compiled.push({ name: pl.name || pl.exprSrc, ast: parseExpr(pl.exprSrc) });
+    } catch (e) {
+      errors.push(`plot ${pl.exprSrc}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  if (errors.length && !compiled.length && !p.series.length) {
+    return `<div class="np-chart-error">${esc(errors.join("；"))}</div>`;
+  }
+
   const W = 560, H = 320;
   const m = { l: p.yLabel ? 72 : 56, r: 14, t: p.title ? 34 : 14, b: p.xLabel ? 48 : 40 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
 
-  // Transform to plot space (log10 when requested); drop non-positives in log.
   const tx = (v: number) => (p.xlog ? (v > 0 ? Math.log10(v) : NaN) : v);
   const ty = (v: number) => (p.ylog ? (v > 0 ? Math.log10(v) : NaN) : v);
 
+  // Sample the function overlays across the x range (log-uniform when xlog).
+  const [rawA, rawB] = chartXRange(p);
+  const sampleXs: number[] = [];
+  if (compiled.length) {
+    const a = tx(rawA), b = tx(rawB);
+    if (Number.isFinite(a) && Number.isFinite(b) && a < b) {
+      for (let i = 0; i <= SAMPLES; i++) {
+        const t = a + ((b - a) * i) / SAMPLES;
+        sampleXs.push(p.xlog ? Math.pow(10, t) : t);
+      }
+    }
+  }
+  const curves = compiled.map((c) => ({
+    name: c.name,
+    pts: sampleXs.map((x) => [x, evaluate(c.ast, { ...env, x })] as const),
+  }));
+
   const xsT = p.xs.map(tx);
-  const allYT = p.series.flatMap((s) => s.ys.map(ty)).filter(Number.isFinite);
-  const finiteX = xsT.filter(Number.isFinite);
+  const dataYT = p.series.flatMap((s) => s.ys.map(ty)).filter(Number.isFinite);
+  const curveYT = curves.flatMap((c) => c.pts.map(([, y]) => ty(y))).filter(Number.isFinite);
+  const finiteX = [...xsT.filter(Number.isFinite), ...sampleXs.map(tx).filter(Number.isFinite)];
+  const allYT = [...dataYT, ...curveYT];
   if (!finiteX.length || !allYT.length) {
-    return `<div class="np-chart-error">chart: log 模式下沒有正值可畫</div>`;
+    return `<div class="np-chart-error">chart: 沒有可畫的點（log 模式下需要正值）</div>`;
   }
 
   let xMin = p.xmin !== undefined ? tx(p.xmin) : Math.min(...finiteX);
   let xMax = p.xmax !== undefined ? tx(p.xmax) : Math.max(...finiteX);
   let yMin = p.ymin !== undefined ? ty(p.ymin) : Math.min(...allYT);
   let yMax = p.ymax !== undefined ? ty(p.ymax) : Math.max(...allYT);
-  // Include error-bar extents.
   for (const s of p.series) {
     if (!s.errs) continue;
     s.ys.forEach((v, i) => {
@@ -214,7 +330,6 @@ export function renderChart(src: string): string {
   parts.push(`<svg class="np-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img">`);
   if (p.title) parts.push(`<text x="${W / 2}" y="20" text-anchor="middle" class="np-chart-title">${esc(p.title)}</text>`);
 
-  // grid + ticks
   const yTicks = p.ylog ? logTicks(yMin, yMax) : linTicks(yMin, yMax);
   const xTicks = p.xlog ? logTicks(xMin, xMax) : linTicks(xMin, xMax);
   const yLab = (v: number) => (p.ylog ? fmtLog(v) : fmt(v));
@@ -228,13 +343,12 @@ export function renderChart(src: string): string {
     const x = X(tv);
     parts.push(`<text x="${x}" y="${H - m.b + 16}" text-anchor="middle" class="np-chart-tick">${xLab(tv)}</text>`);
   }
-  // axes + labels
   parts.push(`<line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${m.t + ih}" class="np-chart-axis"/>`);
   parts.push(`<line x1="${m.l}" y1="${m.t + ih}" x2="${W - m.r}" y2="${m.t + ih}" class="np-chart-axis"/>`);
   if (p.xLabel) parts.push(`<text x="${m.l + iw / 2}" y="${H - 6}" text-anchor="middle" class="np-chart-tick">${esc(p.xLabel)}</text>`);
   if (p.yLabel) parts.push(`<text transform="translate(14 ${m.t + ih / 2}) rotate(-90)" text-anchor="middle" class="np-chart-tick">${esc(p.yLabel)}</text>`);
 
-  // series
+  // data series
   const barW = Math.max(2, (iw / Math.max(1, p.xs.length)) / (p.series.length + 0.5));
   p.series.forEach((s, si) => {
     const color = COLORS[si % COLORS.length]!;
@@ -249,7 +363,6 @@ export function renderChart(src: string): string {
       });
       return;
     }
-    // error bars first (under the markers)
     if (s.errs) {
       s.ys.forEach((v, i) => {
         const e = s.errs![i], xT = xsT[i]!;
@@ -273,17 +386,53 @@ export function renderChart(src: string): string {
     }
   });
 
-  // legend (only when named / multiple series)
-  const legendNames = p.series.map((s) => s.name).filter(Boolean);
-  if (legendNames.length && (p.series.length > 1 || p.series[0]!.name)) {
-    p.series.forEach((s, i) => {
-      if (!s.name) return;
-      const x = m.l + 10 + i * 110, y = m.t + 12;
+  // function overlays (colors continue after the data series)
+  curves.forEach((c, ci) => {
+    const color = COLORS[(p.series.length + ci) % COLORS.length]!;
+    const pts = c.pts
+      .map(([x, y]) => [tx(x), ty(y)] as const)
+      .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+      .map(([x, y]) => [X(x), Y(y)] as const)
+      .filter(([, y]) => y > m.t - 40 && y < m.t + ih + 40);   // clip runaway values
+    if (pts.length > 1) {
+      parts.push(`<polyline points="${pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="6 3"/>`);
+    }
+  });
+
+  // legend: data series first, then function curves
+  const legendItems: string[] = [];
+  p.series.forEach((s) => legendItems.push(s.name));
+  curves.forEach((c) => legendItems.push(c.name));
+  if (legendItems.some(Boolean) && (legendItems.length > 1 || legendItems[0])) {
+    let li = 0;
+    legendItems.forEach((name, i) => {
+      if (!name) return;
+      const x = m.l + 10 + li * 120, y = m.t + 12;
+      li++;
       parts.push(`<rect x="${x}" y="${y - 8}" width="10" height="10" fill="${COLORS[i % COLORS.length]}"/>`);
-      parts.push(`<text x="${x + 15}" y="${y + 1}" class="np-chart-tick">${esc(s.name)}</text>`);
+      parts.push(`<text x="${x + 15}" y="${y + 1}" class="np-chart-tick">${esc(name.length > 14 ? name.slice(0, 13) + "…" : name)}</text>`);
     });
+  }
+
+  if (errors.length) {
+    parts.push(`<text x="${m.l + 4}" y="${m.t + ih - 6}" class="np-chart-tick" fill="#dc2626">⚠ ${esc(errors[0]!.slice(0, 60))}</text>`);
   }
 
   parts.push("</svg>");
   return parts.join("");
+}
+
+/** Free parameters used by the plots but not declared via `param:` lines —
+ * the studio auto-creates sliders for these. */
+export function undeclaredParams(p: ChartSpec): string[] {
+  const declared = new Set(p.params.map((x) => x.name));
+  const out = new Set<string>();
+  for (const pl of p.plots) {
+    try {
+      for (const name of freeParams(parseExpr(pl.exprSrc))) {
+        if (!declared.has(name)) out.add(name);
+      }
+    } catch { /* unparseable plot — studio shows the error inline */ }
+  }
+  return [...out].sort();
 }

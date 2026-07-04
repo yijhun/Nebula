@@ -117,6 +117,8 @@ let EN: [String: String] = [
     "文獻庫": "Literature Library", "搜尋與取代（跨檔案）": "Search & Replace (all files)",
     "投稿前檢查": "Pre-submission Check",
     // Table menu
+    "圖表 Chart": "Chart", "互動圖表編輯器": "Interactive Chart Studio",
+    "轉成 TikZ（插在下方）": "Convert to TikZ (insert below)",
     "表格 Table": "Table", "格式化表格": "Format Table",
     "下方插入列": "Insert Row Below", "右方插入欄": "Insert Column Right",
     "刪除目前列": "Delete Row", "刪除目前欄": "Delete Column", "切換欄對齊": "Cycle Column Alignment",

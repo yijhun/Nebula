@@ -123,7 +123,8 @@ function rehypeCharts() {
       // figure is LaTeX-native; it renders in the compiled-PDF live preview
       // and in the exported paper).
       const html = isChart
-        ? renderChart(src)
+        ? renderChart(src) +
+          `<button class="np-chart-edit" title="互動編輯（滑桿調參數）">✎ 編輯</button>`
         : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
       const frag = fromHtml(html, { fragment: true });
       const props = node.properties as Record<string, unknown> | undefined;

@@ -236,6 +236,16 @@
         color: #dc2626; font-size: 12px; padding: 8px;
         border: 1px dashed #dc2626; border-radius: 6px;
       }
+      /* ✎ edit button on rendered charts — appears on hover. */
+      .np-chart-wrap { position: relative; }
+      .np-chart-edit {
+        position: absolute; top: 6px; right: 6px;
+        font-size: 11px; padding: 2px 8px; border-radius: 5px;
+        border: 1px solid rgba(127,127,127,0.4);
+        background: rgba(127,127,127,0.15); color: inherit;
+        cursor: pointer; opacity: 0; transition: opacity 0.15s;
+      }
+      .np-chart-wrap:hover .np-chart-edit { opacity: 0.9; }
       /* ```tikz placeholder — the real figure renders in the PDF preview. */
       .np-tikz-placeholder {
         font-size: 12px; padding: 14px; opacity: 0.75;

@@ -31,6 +31,7 @@ import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from 
 import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
+import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
 import { latexAutocomplete } from "./complete.js";
@@ -272,6 +273,12 @@ const api = {
   tableOp(op: string): string {
     return runTableOp(view, op as TableOp) ? "ok" : "no-table";
   },
+  /** Open the interactive chart editor for the ```chart block at the cursor
+   * (or start a new block inserted on save). */
+  chartStudio(): void { openChartStudio(view); },
+  /** Translate the ```chart block at the cursor into a ```tikz block inserted
+   * below it. Returns "ok" | "no-chart" | "error: …". */
+  chartToTikz(): string { return insertTikzBelow(view); },
   /** The citekey at/around the cursor — from `[@key]`, `[@key; @key2]`, or
    * `\cite{key}` / `\citep{...}` etc. Returns "" if the cursor isn't on one.
    * Used by "open in Zotero". */
@@ -705,6 +712,16 @@ function boot(): void {
       e.preventDefault();
       const key = cite.getAttribute("data-cite");
       if (key) postToHost({ type: "openCite", key });
+      return;
+    }
+    // ✎ on a rendered chart → jump the cursor into its block, open the studio.
+    const chartEdit = target?.closest(".np-chart-edit") as HTMLElement | null;
+    if (chartEdit) {
+      e.preventDefault();
+      const wrap = chartEdit.closest("[data-line]") as HTMLElement | null;
+      const line = Number(wrap?.getAttribute("data-line"));
+      if (Number.isFinite(line)) jumpEditorToLine(line + 1);   // land inside the block
+      openChartStudio(view);
     }
   });
   // Double click: jump the editor to that block's source line.

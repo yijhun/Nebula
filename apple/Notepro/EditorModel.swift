@@ -514,6 +514,23 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
+    /// Open the interactive chart studio for the ```chart block at the cursor.
+    func chartStudio() {
+        webView?.evaluateJavaScript("window.notepro.chartStudio()")
+    }
+
+    /// Translate the ```chart block at the cursor into a ```tikz block below it.
+    func chartToTikz() {
+        webView?.evaluateJavaScript("window.notepro.chartToTikz()") { [weak self] result, _ in
+            switch result as? String {
+            case "no-chart": self?.statusText = "游標不在 chart 區塊內（先點進一個 ```chart）"
+            case let s? where s.hasPrefix("error:"):
+                self?.statusText = "chart 轉換失敗：\(s.dropFirst(6))"
+            default: self?.statusText = "已插入 TikZ 版（原 chart 草稿保留）"
+            }
+        }
+    }
+
     /// Open the citation under the cursor in Zotero (Better BibTeX select URI).
     func openCiteAtCursorInZotero() {
         webView?.evaluateJavaScript("window.notepro.citeAtCursor()") { result, _ in

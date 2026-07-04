@@ -113,6 +113,11 @@ struct NoteproApp: App {
                     .keyboardShortcut("k", modifiers: [.command, .option, .shift])
                     .disabled(focusedEditor == nil)
                 Divider()
+                Menu(LZ("圖表 Chart")) {
+                    Button(LZ("互動圖表編輯器")) { focusedEditor?.chartStudio() }
+                    Button(LZ("轉成 TikZ（插在下方）")) { focusedEditor?.chartToTikz() }
+                }
+                .disabled(focusedEditor == nil)
                 Menu(LZ("表格 Table")) {
                     Button(LZ("格式化表格")) { focusedEditor?.tableOp("format") }
                     Divider()
