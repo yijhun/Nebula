@@ -76,3 +76,16 @@ function texText(s: string): string {
   if (s.includes("$")) return s;   // author wrote math — trust it
   return s.replace(/([%#&_])/g, "\\$1");
 }
+
+/** Markdown pre-pass for the LaTeX converter: every ```chart block that
+ * translates cleanly becomes an equivalent ```tikz block, so draft charts
+ * SHOW UP in the exported paper instead of silently disappearing. Blocks that
+ * fail to translate are left as-is (the emitter then skips them with a
+ * comment marking the spot). */
+export function chartBlocksToTikz(md: string): string {
+  return md.replace(/```chart[ \t]*\n([\s\S]*?)\n```/g, (whole, body: string) => {
+    const tikz = chartToTikz(body);
+    if (tikz.startsWith("error:")) return whole;
+    return "```tikz\n% （由 chart 草稿自動轉換；要客製請用「插入 ▸ 圖表 ▸ 轉成 TikZ」再手調）\n" + tikz + "\n```";
+  });
+}

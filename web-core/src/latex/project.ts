@@ -22,6 +22,7 @@ import { buildBib } from "./bib.js";
 import { fillTemplate, resolveTemplate, type TemplateFields } from "./templates.js";
 import { CONVERTER_TEMPLATES } from "./builtin-templates.js";
 import { containsCJK, NATBIB_TEMPLATES } from "./index.js";
+import { chartBlocksToTikz } from "../editor/chartTikz.js";
 
 export interface ProjectChapterInput {
   /** Source filename, e.g. "01-intro.md". */
@@ -82,7 +83,9 @@ export function convertProject(
   const natbibStyle = NATBIB_TEMPLATES[templateId];
   const bibMode = natbibStyle ? "natbib" : "biblatex";
 
-  for (const ch of chapters) {
+  for (const rawCh of chapters) {
+    // Draft ```chart blocks become real pgfplots figures in the paper.
+    const ch = { ...rawCh, md: chartBlocksToTikz(rawCh.md) };
     const { tree, frontmatter } = parseMarkdown(ch.md);
     const r = emit(tree, { citeStyle: bibMode });
     r.features.forEach((f) => features.add(f));

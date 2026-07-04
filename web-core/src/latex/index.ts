@@ -13,6 +13,7 @@ import {
   type TemplateFields,
 } from "./templates.js";
 import { CONVERTER_TEMPLATES } from "./builtin-templates.js";
+import { chartBlocksToTikz } from "../editor/chartTikz.js";
 
 /** Journal templates that require natbib citations, and their `.bst` style. */
 export const NATBIB_TEMPLATES: Record<string, string> = {
@@ -46,6 +47,9 @@ function authorField(author: string | string[] | undefined): string {
 
 /** Convert Obsidian-flavored Markdown to a complete LaTeX document. */
 export function convert(source: string, options: ConvertOptions = {}): ConvertResult {
+  // Draft ```chart blocks become real pgfplots figures in the paper (blocks
+  // that fail to translate stay put and get skipped with a comment).
+  source = chartBlocksToTikz(source);
   const { tree, frontmatter } = parseMarkdown(source);
 
   // Resolve the template first: the astronomy journal classes need natbib

@@ -76,6 +76,11 @@ function stripMathBlankLines(s: string): string {
   return s.replace(/\n[ \t]*(?:\n[ \t]*)+/g, "\n");
 }
 
+/** A fenced code block (``` … ```). Extraction must NEVER reach inside one —
+ * a ```tikz block legitimately contains \begin{axis}/\begin{tikzpicture}, and
+ * ripping those out to placeholders mangles the code block on export. */
+const CODE_FENCE_RE = /^[ \t]*```[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm;
+
 export function extractLatexBlocks(src: string): { text: string; blocks: ExtractedBlock[] } {
   const blocks: ExtractedBlock[] = [];
   // Placeholder that PRESERVES the match's line count, so downstream source
@@ -85,32 +90,50 @@ export function extractLatexBlocks(src: string): { text: string; blocks: Extract
     const nl = (match.match(/\n/g) || []).length;
     return `${LB}${blocks.length - 1}${LB}` + "\n".repeat(nl);
   };
-  // 1. Pull every $$…$$ out as a display block (→ \[ … \]).
-  const pre = src.replace(DISPLAY_MATH, (m: string, inner: string) =>
-    ph(`\\[\n${stripMathBlankLines(inner.trim())}\n\\]`, m, true),
-  );
-  // 2. Extract raw LaTeX (\begin{…}, \[ \], whitelisted \cmd) OUTSIDE inline $…$.
-  // Strip blank lines from math blocks (\[…\] + math envs), not text envs.
-  const extract = (chunk: string): string => {
-    LATEX_BLOCK_RE.lastIndex = 0;
-    chunk = chunk.replace(LATEX_BLOCK_RE, (m) => {
-      const isMath = m.startsWith("\\[") || MATH_ENV_RE.test(m);
-      return ph(isMath ? stripMathBlankLines(m) : m, m, true);
-    });
-    LATEX_INLINE_RE.lastIndex = 0;
-    chunk = chunk.replace(LATEX_INLINE_RE, (m) => ph(m, m, false));
-    return chunk;
+
+  /** The original extraction pipeline, applied to one NON-code segment. */
+  const processSegment = (seg: string): string => {
+    // 1. Pull every $$…$$ out as a display block (→ \[ … \]).
+    const pre = seg.replace(DISPLAY_MATH, (m: string, inner: string) =>
+      ph(`\\[\n${stripMathBlankLines(inner.trim())}\n\\]`, m, true),
+    );
+    // 2. Extract raw LaTeX (\begin{…}, \[ \], whitelisted \cmd) OUTSIDE inline $…$.
+    // Strip blank lines from math blocks (\[…\] + math envs), not text envs.
+    const extract = (chunk: string): string => {
+      LATEX_BLOCK_RE.lastIndex = 0;
+      chunk = chunk.replace(LATEX_BLOCK_RE, (m) => {
+        const isMath = m.startsWith("\\[") || MATH_ENV_RE.test(m);
+        return ph(isMath ? stripMathBlankLines(m) : m, m, true);
+      });
+      LATEX_INLINE_RE.lastIndex = 0;
+      chunk = chunk.replace(LATEX_INLINE_RE, (m) => ph(m, m, false));
+      return chunk;
+    };
+    let out = "";
+    let last = 0;
+    let m: RegExpExecArray | null;
+    INLINE_MATH.lastIndex = 0;
+    while ((m = INLINE_MATH.exec(pre))) {
+      out += extract(pre.slice(last, m.index));
+      out += m[0];
+      last = m.index + m[0].length;
+    }
+    out += extract(pre.slice(last));
+    return out;
   };
+
+  // Walk fenced code blocks: process the text BETWEEN them, pass the code
+  // through byte-for-byte.
   let out = "";
   let last = 0;
-  let m: RegExpExecArray | null;
-  INLINE_MATH.lastIndex = 0;
-  while ((m = INLINE_MATH.exec(pre))) {
-    out += extract(pre.slice(last, m.index));
-    out += m[0];
-    last = m.index + m[0].length;
+  let fm: RegExpExecArray | null;
+  CODE_FENCE_RE.lastIndex = 0;
+  while ((fm = CODE_FENCE_RE.exec(src))) {
+    out += processSegment(src.slice(last, fm.index));
+    out += fm[0];
+    last = fm.index + fm[0].length;
   }
-  out += extract(pre.slice(last));
+  out += processSegment(src.slice(last));
   return { text: out, blocks };
 }
 
