@@ -20,6 +20,7 @@ import { extractLatexBlocks, splitOnLatexPlaceholders, type ExtractedBlock } fro
 import { noteExists } from "./notes.js";
 import { tex2svg } from "./mathjax.js";
 import { renderChart } from "./chart.js";
+import { parseDiagramModel, diagramToSvg } from "./diagramStudio.js";
 
 /** Matches a `[@key]`, `[@a; @b]`, `[@key, p. 5]` citation group. */
 const CITE_RE = /\[([^\]\[\n]*@[^\]\n]*)\]/g;
@@ -119,13 +120,20 @@ function rehypeCharts() {
       if (!isChart && !isTikz) return;
       const src = ((code?.children as Array<{ value?: string }>) ?? [])
         .map((c) => c.value ?? "").join("");
-      // ```chart → inline SVG sketch. ```tikz → a placeholder card (the real
-      // figure is LaTeX-native; it renders in the compiled-PDF live preview
-      // and in the exported paper).
-      const html = isChart
-        ? renderChart(src) +
-          `<button class="np-chart-edit" title="互動編輯（滑桿調參數）">✎ 編輯</button>`
-        : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
+      // ```chart → inline SVG sketch. ```tikz with a studio model → render the
+      // model as SVG right here in the markdown preview (no compile needed).
+      // Hand-written tikz → placeholder card (real render in the PDF preview).
+      let html: string;
+      if (isChart) {
+        html = renderChart(src) +
+          `<button class="np-chart-edit" title="互動編輯（滑桿調參數）">✎ 編輯</button>`;
+      } else {
+        const model = parseDiagramModel(src);
+        html = model && model.length
+          ? diagramToSvg(model) +
+            `<button class="np-chart-edit np-diagram-edit" title="用圖解編輯器打開">✎ 編輯</button>`
+          : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
+      }
       const frag = fromHtml(html, { fragment: true });
       const props = node.properties as Record<string, unknown> | undefined;
       par.children[index] = {

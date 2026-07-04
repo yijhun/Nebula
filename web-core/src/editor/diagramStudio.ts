@@ -25,8 +25,10 @@ type Obj =
 const TIKZ_COLOR: Record<Color, string> = {
   black: "", blue: "blue", red: "red", green: "green!60!black",
 };
+// Paper ink — the canvas is always white (matching the eventual PDF), so
+// "black" is real dark ink, never theme-dependent currentColor.
 const SVG_COLOR: Record<Color, string> = {
-  black: "currentColor", blue: "#4a9eff", red: "#ff6b6b", green: "#37b24d",
+  black: "#1d1f23", blue: "#1c7ed6", red: "#e03131", green: "#2b8a3e",
 };
 
 const MODEL_RE = /^%\s*nebula-diagram:\s*(\{.*\})\s*$/m;
@@ -83,6 +85,91 @@ export function parseDiagramModel(blockSrc: string): Obj[] | null {
   } catch { return null; }
 }
 
+// ── standalone SVG rendering (markdown preview) ───────────────────────────
+
+const escXml = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** Label text for SVG: `$\theta$` → italic θ-ish plain text (strip $ and
+ * backslashes — a draft approximation; the PDF renders the real math). */
+function svgLabel(s: string): { text: string; italic: boolean } {
+  const italic = s.includes("$");
+  return { text: s.replace(/\$/g, "").replace(/\\/g, ""), italic };
+}
+
+/** Render a diagram model to a self-contained SVG string — used by the
+ * markdown preview so studio figures are visible WITHOUT compiling. White
+ * paper + dark ink, auto-fitted bounding box. */
+export function diagramToSvg(objs: Obj[]): string {
+  if (!objs.length) return "";
+  // bounding box over all object extents
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const grow = (x: number, y: number): void => {
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  };
+  for (const o of objs) {
+    switch (o.t) {
+      case "pt": case "lbl": grow(o.x, o.y); break;
+      case "seg": case "arr": grow(o.x1, o.y1); grow(o.x2, o.y2); break;
+      case "circ": grow(o.x - o.r, o.y - o.r); grow(o.x + o.r, o.y + o.r); break;
+      case "ell": grow(o.x - o.rx, o.y - o.ry); grow(o.x + o.rx, o.y + o.ry); break;
+    }
+  }
+  const PAD = 0.7, S = 40;   // padding (cm), px per cm
+  x0 -= PAD; x1 += PAD; y0 -= PAD; y1 += PAD;
+  const w = Math.max(1, (x1 - x0) * S), h = Math.max(1, (y1 - y0) * S);
+  const X = (x: number): number => (x - x0) * S;
+  const Y = (y: number): number => (y1 - y) * S;
+
+  const out: string[] = [];
+  out.push(`<svg class="np-diagram" viewBox="0 0 ${w.toFixed(0)} ${h.toFixed(0)}" ` +
+    `width="${Math.min(w, 640).toFixed(0)}" xmlns="http://www.w3.org/2000/svg" role="img">`);
+  out.push(`<rect width="100%" height="100%" fill="#ffffff"/>`);
+  for (const o of objs) {
+    const col = SVG_COLOR[o.color];
+    const dash = "dash" in o && o.dash ? ` stroke-dasharray="7 4"` : "";
+    switch (o.t) {
+      case "pt": {
+        out.push(`<circle cx="${X(o.x)}" cy="${Y(o.y)}" r="3.5" fill="${col}"/>`);
+        if (o.label) {
+          const l = svgLabel(o.label);
+          out.push(`<text x="${X(o.x) + 7}" y="${Y(o.y) - 7}" fill="${col}" font-size="14"` +
+            (l.italic ? ` font-style="italic"` : "") + `>${escXml(l.text)}</text>`);
+        }
+        break;
+      }
+      case "seg": case "arr": {
+        const [ax, ay, bx, by] = [X(o.x1), Y(o.y1), X(o.x2), Y(o.y2)];
+        out.push(`<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="${col}" stroke-width="2"${dash}/>`);
+        if (o.t === "arr") {
+          const ang = Math.atan2(by - ay, bx - ax);
+          for (const s of [-1, 1]) {
+            const hx = bx - 10 * Math.cos(ang - s * 0.42);
+            const hy = by - 10 * Math.sin(ang - s * 0.42);
+            out.push(`<line x1="${bx}" y1="${by}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="${col}" stroke-width="2"/>`);
+          }
+        }
+        break;
+      }
+      case "circ":
+        out.push(`<circle cx="${X(o.x)}" cy="${Y(o.y)}" r="${o.r * S}" fill="none" stroke="${col}" stroke-width="2"${dash}/>`);
+        break;
+      case "ell":
+        out.push(`<ellipse cx="${X(o.x)}" cy="${Y(o.y)}" rx="${o.rx * S}" ry="${o.ry * S}" fill="none" stroke="${col}" stroke-width="2"${dash}/>`);
+        break;
+      case "lbl": {
+        const l = svgLabel(o.text);
+        out.push(`<text x="${X(o.x)}" y="${Y(o.y)}" fill="${col}" font-size="15" text-anchor="middle"` +
+          (l.italic ? ` font-style="italic"` : "") + `>${escXml(l.text)}</text>`);
+        break;
+      }
+    }
+  }
+  out.push("</svg>");
+  return out.join("");
+}
+
 // ── block locating (any ```tikz fence around the cursor) ─────────────────
 
 interface BlockLoc { innerFrom: number; innerTo: number }
@@ -129,7 +216,10 @@ export function openDiagramStudio(view: EditorView): void {
   let selected = -1;
   let dragOff: { dx: number; dy: number } | null = null;
 
-  // overlay scaffolding
+  // overlay scaffolding — panel follows the app theme; the CANVAS itself is
+  // always white paper with dark ink (that's what the figure will look like
+  // in the compiled PDF, and it stays readable in dark mode).
+  const light = document.body.classList.contains("np-light");
   const overlay = document.createElement("div");
   overlay.className = "np-diagram-studio";
   overlay.style.cssText =
@@ -137,7 +227,8 @@ export function openDiagramStudio(view: EditorView): void {
     "align-items:center;justify-content:center;";
   const panel = document.createElement("div");
   panel.style.cssText =
-    "background:var(--np-bg, #23252b);color:inherit;border-radius:10px;padding:12px;" +
+    `background:${light ? "#ffffff" : "#23252b"};color:${light ? "#1d1f23" : "#dddddd"};` +
+    "border-radius:10px;padding:12px;" +
     "display:flex;flex-direction:column;gap:8px;box-shadow:0 12px 40px rgba(0,0,0,0.45);" +
     "font-size:13px;max-width:96vw;max-height:92vh;overflow:auto;";
   overlay.appendChild(panel);
@@ -210,7 +301,7 @@ export function openDiagramStudio(view: EditorView): void {
   const svg = document.createElementNS(NSVG, "svg");
   svg.setAttribute("width", String(WCM * PPC));
   svg.setAttribute("height", String(HCM * PPC));
-  svg.style.cssText = "background:rgba(127,127,127,0.06);border:1px solid rgba(127,127,127,0.3);" +
+  svg.style.cssText = "background:#ffffff;border:1px solid rgba(127,127,127,0.45);" +
     "border-radius:6px;cursor:crosshair;touch-action:none;";
   panel.appendChild(svg);
 
@@ -387,8 +478,8 @@ export function openDiagramStudio(view: EditorView): void {
       const l = document.createElementNS(NSVG, "line");
       l.setAttribute("x1", String(px)); l.setAttribute("x2", String(px));
       l.setAttribute("y1", "0"); l.setAttribute("y2", String(HCM * PPC));
-      l.setAttribute("stroke", "currentColor");
-      l.setAttribute("stroke-opacity", gx === 0 ? "0.35" : "0.08");
+      l.setAttribute("stroke", "#1d1f23");
+      l.setAttribute("stroke-opacity", gx === 0 ? "0.4" : "0.1");
       svg.appendChild(l);
     }
     for (let gy = Math.ceil(Y1 - HCM); gy <= Y1; gy++) {
@@ -396,8 +487,8 @@ export function openDiagramStudio(view: EditorView): void {
       const l = document.createElementNS(NSVG, "line");
       l.setAttribute("y1", String(py)); l.setAttribute("y2", String(py));
       l.setAttribute("x1", "0"); l.setAttribute("x2", String(WCM * PPC));
-      l.setAttribute("stroke", "currentColor");
-      l.setAttribute("stroke-opacity", gy === 0 ? "0.35" : "0.08");
+      l.setAttribute("stroke", "#1d1f23");
+      l.setAttribute("stroke-opacity", gy === 0 ? "0.4" : "0.1");
       svg.appendChild(l);
     }
     objs.forEach((o, i) => {

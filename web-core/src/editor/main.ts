@@ -718,14 +718,16 @@ function boot(): void {
       if (key) postToHost({ type: "openCite", key });
       return;
     }
-    // ✎ on a rendered chart → jump the cursor into its block, open the studio.
+    // ✎ on a rendered chart/diagram → jump the cursor into its block, then
+    // open the matching studio.
     const chartEdit = target?.closest(".np-chart-edit") as HTMLElement | null;
     if (chartEdit) {
       e.preventDefault();
       const wrap = chartEdit.closest("[data-line]") as HTMLElement | null;
       const line = Number(wrap?.getAttribute("data-line"));
       if (Number.isFinite(line)) jumpEditorToLine(line + 1);   // land inside the block
-      openChartStudio(view);
+      if (chartEdit.classList.contains("np-diagram-edit")) openDiagramStudio(view);
+      else openChartStudio(view);
     }
   });
   // Double click: jump the editor to that block's source line.
