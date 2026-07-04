@@ -79,7 +79,10 @@ export function openChartStudio(view: EditorView): void {
     spec.params.push({ name, value: 1, min, max });
   }
 
-  // ── overlay scaffolding (same pattern as the AI panel) ──
+  // ── overlay scaffolding — panel follows the app theme; the chart preview
+  // sits on a WHITE paper card (dark ink ticks stay readable in dark mode,
+  // and it matches how the chart looks in the preview pane / PDF). ──
+  const light = document.body.classList.contains("np-light");
   const overlay = document.createElement("div");
   overlay.className = "np-chart-studio";
   overlay.style.cssText =
@@ -87,7 +90,8 @@ export function openChartStudio(view: EditorView): void {
     "align-items:center;justify-content:center;";
   const panel = document.createElement("div");
   panel.style.cssText =
-    "background:var(--np-bg, #23252b);color:inherit;border-radius:10px;padding:14px;" +
+    `background:${light ? "#ffffff" : "#23252b"};color:${light ? "#1d1f23" : "#dddddd"};` +
+    "border-radius:10px;padding:14px;" +
     "width:min(960px,94vw);max-height:90vh;overflow:auto;display:flex;gap:14px;" +
     "box-shadow:0 12px 40px rgba(0,0,0,0.45);font-size:13px;";
   overlay.appendChild(panel);
@@ -99,6 +103,10 @@ export function openChartStudio(view: EditorView): void {
   panel.appendChild(left); panel.appendChild(right);
 
   const chartBox = document.createElement("div");
+  // White paper card: the SVG's currentColor ticks/axes resolve to dark ink.
+  chartBox.style.cssText =
+    "background:#ffffff;color:#1d1f23;border:1px solid rgba(127,127,127,0.45);" +
+    "border-radius:6px;padding:8px;";
   left.appendChild(chartBox);
   const errBox = document.createElement("div");
   errBox.style.cssText = "color:#dc2626;font-size:12px;min-height:16px;margin-top:6px;";
