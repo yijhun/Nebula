@@ -20,7 +20,9 @@ type Obj =
   | { t: "seg" | "arr"; x1: number; y1: number; x2: number; y2: number; dash: boolean; color: Color }
   | { t: "circ"; x: number; y: number; r: number; dash: boolean; color: Color }
   | { t: "ell"; x: number; y: number; rx: number; ry: number; dash: boolean; color: Color }
-  | { t: "lbl"; x: number; y: number; text: string; color: Color };
+  | { t: "lbl"; x: number; y: number; text: string; color: Color }
+  /** Angle mark: CCW arc from a1° to a2° around vertex (x,y). */
+  | { t: "ang"; x: number; y: number; a1: number; a2: number; r: number; label: string; color: Color };
 
 const TIKZ_COLOR: Record<Color, string> = {
   black: "", blue: "blue", red: "red", green: "green!60!black",
@@ -70,6 +72,21 @@ export function diagramToTikz(objs: Obj[]): string {
       case "lbl":
         lines.push(`\\node${style([])} at (${n(o.x)},${n(o.y)}) {${o.text}};`);
         break;
+      case "ang": {
+        // Numeric start point + label position — avoids the tikz calc library.
+        const rad = (d: number) => (d * Math.PI) / 180;
+        const sx = o.x + o.r * Math.cos(rad(o.a1));
+        const sy = o.y + o.r * Math.sin(rad(o.a1));
+        const a2 = o.a2 >= o.a1 ? o.a2 : o.a2 + 360;
+        lines.push(`\\draw${style([])} (${n(sx)},${n(sy)}) arc[start angle=${n(o.a1)}, end angle=${n(a2)}, radius=${n(o.r)}];`);
+        if (o.label) {
+          const mid = rad((o.a1 + a2) / 2);
+          const lx = o.x + (o.r + 0.35) * Math.cos(mid);
+          const ly = o.y + (o.r + 0.35) * Math.sin(mid);
+          lines.push(`\\node${style([])} at (${n(lx)},${n(ly)}) {${o.label}};`);
+        }
+        break;
+      }
     }
   }
   lines.push("\\end{tikzpicture}");
@@ -114,6 +131,7 @@ export function diagramToSvg(objs: Obj[]): string {
       case "seg": case "arr": grow(o.x1, o.y1); grow(o.x2, o.y2); break;
       case "circ": grow(o.x - o.r, o.y - o.r); grow(o.x + o.r, o.y + o.r); break;
       case "ell": grow(o.x - o.rx, o.y - o.ry); grow(o.x + o.rx, o.y + o.ry); break;
+      case "ang": grow(o.x - o.r - 0.5, o.y - o.r - 0.5); grow(o.x + o.r + 0.5, o.y + o.r + 0.5); break;
     }
   }
   const PAD = 0.7, S = 40;   // padding (cm), px per cm
@@ -164,6 +182,21 @@ export function diagramToSvg(objs: Obj[]): string {
           (l.italic ? ` font-style="italic"` : "") + `>${escXml(l.text)}</text>`);
         break;
       }
+      case "ang": {
+        const rad = (d: number) => (d * Math.PI) / 180;
+        const a2 = o.a2 >= o.a1 ? o.a2 : o.a2 + 360;
+        const sx = X(o.x + o.r * Math.cos(rad(o.a1))), sy = Y(o.y + o.r * Math.sin(rad(o.a1)));
+        const ex = X(o.x + o.r * Math.cos(rad(a2))), ey = Y(o.y + o.r * Math.sin(rad(a2)));
+        const large = a2 - o.a1 > 180 ? 1 : 0;
+        out.push(`<path d="M ${sx.toFixed(1)} ${sy.toFixed(1)} A ${(o.r * S).toFixed(1)} ${(o.r * S).toFixed(1)} 0 ${large} 0 ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="${col}" stroke-width="2"/>`);
+        if (o.label) {
+          const mid = rad((o.a1 + a2) / 2);
+          const l = svgLabel(o.label);
+          out.push(`<text x="${X(o.x + (o.r + 0.35) * Math.cos(mid))}" y="${Y(o.y + (o.r + 0.35) * Math.sin(mid))}" fill="${col}" font-size="14" text-anchor="middle"` +
+            (l.italic ? ` font-style="italic"` : "") + `>${escXml(l.text)}</text>`);
+        }
+        break;
+      }
     }
   }
   out.push("</svg>");
@@ -209,10 +242,12 @@ export function openDiagramStudio(view: EditorView): void {
   const editable = !!restored;           // plain tikz without a model → new diagram
   const objs: Obj[] = restored ?? [];
 
-  let tool: "select" | "pt" | "seg" | "arr" | "circ" | "ell" | "lbl" = objs.length ? "select" : "arr";
+  let tool: "select" | "pt" | "seg" | "arr" | "circ" | "ell" | "lbl" | "ang" = objs.length ? "select" : "arr";
   let color: Color = "black";
   let dashed = false;
   let pending: { x: number; y: number } | null = null;   // first click of 2-click tools
+  let pending2: { x: number; y: number } | null = null;  // second click (angle = 3 clicks)
+  let showGrid = true;
   let selected = -1;
   let dragOff: { dx: number; dy: number } | null = null;
 
@@ -244,7 +279,7 @@ export function openDiagramStudio(view: EditorView): void {
     b.title = hint;
     b.style.cssText = "border:1px solid rgba(127,127,127,0.4);background:rgba(127,127,127,0.12);" +
       "color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
-    b.addEventListener("click", () => { tool = id; pending = null; syncBar(); });
+    b.addEventListener("click", () => { tool = id; pending = null; pending2 = null; syncBar(); });
     toolBtns.set(id, b);
     bar.appendChild(b);
   };
@@ -259,6 +294,7 @@ export function openDiagramStudio(view: EditorView): void {
   mkTool("circ", "圓", "點兩下：圓心 → 半徑");
   mkTool("ell", "橢圓", "點兩下：中心 → 角落");
   mkTool("lbl", "文字", "點一下放置文字（支援 $math$）");
+  mkTool("ang", "角度", "點三下：頂點 → 第一邊 → 第二邊（逆時針掃）");
 
   const colorSel = document.createElement("select");
   colorSel.style.cssText = "background:rgba(127,127,127,0.12);color:inherit;border-radius:5px;padding:3px;";
@@ -285,6 +321,28 @@ export function openDiagramStudio(view: EditorView): void {
   dashLbl.appendChild(dashChk);
   dashLbl.appendChild(document.createTextNode("虛線"));
   bar.appendChild(dashLbl);
+
+  const gridLbl = document.createElement("label");
+  gridLbl.style.cssText = "display:inline-flex;gap:4px;align-items:center;cursor:pointer;";
+  const gridChk = document.createElement("input");
+  gridChk.type = "checkbox"; gridChk.checked = true;
+  gridChk.addEventListener("change", () => { showGrid = gridChk.checked; draw(); });
+  gridLbl.appendChild(gridChk);
+  gridLbl.appendChild(document.createTextNode("網格"));
+  bar.appendChild(gridLbl);
+
+  const dupBtn = document.createElement("button");
+  dupBtn.textContent = "複製";
+  dupBtn.style.cssText = "border:none;background:rgba(127,127,127,0.15);color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
+  dupBtn.addEventListener("click", () => {
+    if (selected < 0) return;
+    const copy = JSON.parse(JSON.stringify(objs[selected]!)) as Obj;
+    moveObj(copy, 0.5, -0.5);
+    objs.push(copy);
+    selected = objs.length - 1;
+    draw();
+  });
+  bar.appendChild(dupBtn);
 
   const delBtn = document.createElement("button");
   delBtn.textContent = "刪除選取";
@@ -342,6 +400,7 @@ export function openDiagramStudio(view: EditorView): void {
       circ: pending ? "再點一下 = 圓上一點（定半徑）" : "點一下 = 圓心",
       ell: pending ? "再點一下 = 角落（定 rx, ry）" : "點一下 = 中心",
       lbl: "點一下放置文字（支援 $\\theta$ 這類 math）。",
+      ang: pending2 ? "再點一下 = 第二邊方向" : pending ? "再點一下 = 第一邊方向" : "點一下 = 角的頂點",
     };
     hint.textContent = hints[tool] ?? "";
   }
@@ -373,6 +432,11 @@ export function openDiagramStudio(view: EditorView): void {
           if (Math.abs(v - 1) < 0.3) return i;
           break;
         }
+        case "ang": {
+          const d = Math.hypot(x - o.x, y - o.y);
+          if (Math.abs(d - o.r) < 0.3 || d < 0.2) return i;
+          break;
+        }
       }
     }
     return -1;
@@ -380,14 +444,14 @@ export function openDiagramStudio(view: EditorView): void {
 
   function objCenter(o: Obj): [number, number] {
     switch (o.t) {
-      case "pt": case "lbl": case "circ": case "ell": return [o.x, o.y];
+      case "pt": case "lbl": case "circ": case "ell": case "ang": return [o.x, o.y];
       case "seg": case "arr": return [(o.x1 + o.x2) / 2, (o.y1 + o.y2) / 2];
     }
   }
 
   function moveObj(o: Obj, dx: number, dy: number): void {
     switch (o.t) {
-      case "pt": case "lbl": case "circ": case "ell": o.x += dx; o.y += dy; break;
+      case "pt": case "lbl": case "circ": case "ell": case "ang": o.x += dx; o.y += dy; break;
       case "seg": case "arr": o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; break;
     }
   }
@@ -423,6 +487,20 @@ export function openDiagramStudio(view: EditorView): void {
       if (text) { objs.push({ t: "lbl", x, y, text, color }); draw(); }
       return;
     }
+    // 3-click tool: angle (vertex → ray 1 → ray 2, CCW sweep)
+    if (tool === "ang") {
+      if (!pending) { pending = { x, y }; syncBar(); draw(); return; }
+      if (!pending2) { pending2 = { x, y }; syncBar(); draw(); return; }
+      const v = pending, p1 = pending2;
+      pending = null; pending2 = null;
+      const deg = (dx: number, dy: number) => ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+      const a1 = deg(p1.x - v.x, p1.y - v.y);
+      const a2 = deg(x - v.x, y - v.y);
+      const label = window.prompt("角度標籤（可空，支援 $math$）", "$\\theta$") ?? "";
+      objs.push({ t: "ang", x: v.x, y: v.y, a1, a2, r: 0.7, label, color });
+      syncBar(); draw();
+      return;
+    }
     // 2-click tools
     if (!pending) { pending = { x, y }; syncBar(); draw(); return; }
     const a = pending; pending = null;
@@ -450,7 +528,7 @@ export function openDiagramStudio(view: EditorView): void {
     const [x, y] = toWorld(e);
     const i = hitTest(x, y);
     const o = i >= 0 ? objs[i] : undefined;
-    if (o && (o.t === "lbl" || o.t === "pt")) {
+    if (o && (o.t === "lbl" || o.t === "pt" || o.t === "ang")) {
       const cur = o.t === "lbl" ? o.text : o.label;
       const next = window.prompt("編輯文字", cur);
       if (next !== null) {
@@ -473,6 +551,7 @@ export function openDiagramStudio(view: EditorView): void {
   function draw(): void {
     svg.replaceChildren();
     // grid
+    if (showGrid)
     for (let gx = Math.ceil(X0); gx <= X0 + WCM; gx++) {
       const [px] = toPx(gx, 0);
       const l = document.createElementNS(NSVG, "line");
@@ -482,6 +561,7 @@ export function openDiagramStudio(view: EditorView): void {
       l.setAttribute("stroke-opacity", gx === 0 ? "0.4" : "0.1");
       svg.appendChild(l);
     }
+    if (showGrid)
     for (let gy = Math.ceil(Y1 - HCM); gy <= Y1; gy++) {
       const [, py] = toPx(0, gy);
       const l = document.createElementNS(NSVG, "line");
@@ -564,9 +644,37 @@ export function openDiagramStudio(view: EditorView): void {
           svg.appendChild(t);
           break;
         }
+        case "ang": {
+          const rad = (d: number) => (d * Math.PI) / 180;
+          const a2 = o.a2 >= o.a1 ? o.a2 : o.a2 + 360;
+          const [sx, sy] = toPx(o.x + o.r * Math.cos(rad(o.a1)), o.y + o.r * Math.sin(rad(o.a1)));
+          const [ex, ey] = toPx(o.x + o.r * Math.cos(rad(a2)), o.y + o.r * Math.sin(rad(a2)));
+          const large = a2 - o.a1 > 180 ? 1 : 0;
+          const path = mk("path");
+          path.setAttribute("d", `M ${sx.toFixed(1)} ${sy.toFixed(1)} A ${(o.r * PPC).toFixed(1)} ${(o.r * PPC).toFixed(1)} 0 ${large} 0 ${ex.toFixed(1)} ${ey.toFixed(1)}`);
+          if (o.label) {
+            const mid = rad((o.a1 + a2) / 2);
+            const [lx, ly] = toPx(o.x + (o.r + 0.35) * Math.cos(mid), o.y + (o.r + 0.35) * Math.sin(mid));
+            const t = document.createElementNS(NSVG, "text");
+            t.setAttribute("x", String(lx)); t.setAttribute("y", String(ly));
+            t.setAttribute("fill", col); t.setAttribute("font-size", "13");
+            t.setAttribute("text-anchor", "middle");
+            t.textContent = o.label;
+            svg.appendChild(t);
+          }
+          break;
+        }
       }
     });
-    // pending first-click marker
+    // pending click markers
+    if (pending2) {
+      const [px, py] = toPx(pending2.x, pending2.y);
+      const c = document.createElementNS(NSVG, "circle");
+      c.setAttribute("cx", String(px)); c.setAttribute("cy", String(py));
+      c.setAttribute("r", "4");
+      c.setAttribute("fill", "#37b24d");
+      svg.appendChild(c);
+    }
     if (pending) {
       const [px, py] = toPx(pending.x, pending.y);
       const c = document.createElementNS(NSVG, "circle");

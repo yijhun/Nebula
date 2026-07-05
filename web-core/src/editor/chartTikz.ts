@@ -5,7 +5,7 @@
  * as numbers) all carry over. The emitter/preamble already handle ```tikz →
  * paper, so the output compiles straight into the manuscript.
  */
-import { parseChartSource, chartXRange, paramBindings, type ChartSpec } from "./chart.js";
+import { parseChartSource, chartXRange, paramBindings, computeFit } from "./chart.js";
 import { parse as parseExpr, toPgf } from "./expr.js";
 
 /** Convert chart-block source → tikz-block INNER source (no fences).
@@ -28,6 +28,7 @@ export function chartToTikz(src: string): string {
   const legendNames = [
     ...p.series.map((s) => s.name),
     ...p.plots.map((pl) => pl.name || pl.exprSrc),
+    ...p.fits.map(() => "fit"),
   ].filter(Boolean);
   if (legendNames.length) opts.push("legend pos=outer north east", "legend cell align=left");
 
@@ -67,6 +68,12 @@ export function chartToTikz(src: string): string {
     if (legendNames.length) lines.push(`\\addlegendentry{${texText(pl.name || pl.exprSrc)}}`);
   }
 
+  for (const f of p.fits) {
+    const fit = computeFit(p, f.kind);
+    if (!fit) { lines.push(`% fit ${f.kind} 略過（數據不足或含非正值）`); continue; }
+    lines.push(`\\addplot[smooth, thick, dashed, domain=${a}:${b}, samples=120] { ${toPgf(parseExpr(fit.exprSrc))} };`);
+    if (legendNames.length) lines.push(`\\addlegendentry{${fit.texLabel}}`);
+  }
   lines.push(`\\end{axis}`);
   return lines.join("\n");
 }

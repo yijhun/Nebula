@@ -30,6 +30,7 @@ const COLORS = ["#4a9eff", "#ff6b6b", "#51cf66", "#ffa94d", "#b197fc", "#f783ac"
 
 export interface Series { name: string; ys: number[]; errs?: number[] }
 export interface PlotDef { name: string; exprSrc: string }
+export interface FitDef { kind: "linear" | "powerlaw" | "exp" | "log" }
 export interface ParamDef { name: string; value: number; min: number; max: number }
 
 export interface ChartSpec {
@@ -45,16 +46,57 @@ export interface ChartSpec {
   series: Series[];
   plots: PlotDef[];
   params: ParamDef[];
+  /** Least-squares fits over the FIRST data series (`fit: powerlaw` …). */
+  fits: FitDef[];
   /** Raw data lines (header + numeric rows) exactly as typed — round-trips
    * through the studio's data textarea. */
   dataLines: string[];
+  /** External data file (`data: obs.csv`) — rows come from the vault file
+   * via the async cache below instead of inline lines. */
+  dataRef?: string;
 }
 
-const OPT_RE = /^(type|title|xlabel|ylabel|log|xlog|ylog|yflip|xmin|xmax|ymin|ymax)\s*[:：]\s*(.+)$/i;
+const OPT_RE = /^(type|title|xlabel|ylabel|log|xlog|ylog|yflip|xmin|xmax|ymin|ymax|data)\s*[:：]\s*(.+)$/i;
 const PLOT_RE = /^plot\s*[:：]\s*(.+)$/i;
 const PARAM_RE = /^param\s*[:：]\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^[\]]+?)\s*(?:\[\s*([^,\]]+)\s*,\s*([^,\]]+)\s*\])?\s*$/i;
 const ERR_RE = /(^err$|err$|error$)/i;
 const truthy = (v: string): boolean => /^(true|1|yes|on)$/i.test(v.trim());
+
+// ── external data files (`data: obs.csv`) ────────────────────────────────
+// Loaded asynchronously through the native bridge and cached; while a file is
+// in flight the chart renders a loading card, and `onLoad` re-renders the
+// preview once the text arrives.
+type CsvEntry = { state: "loading" | "ok" | "fail"; text?: string; error?: string };
+const csvCache = new Map<string, CsvEntry>();
+let csvFetcher: ((ref: string) => Promise<string>) | null = null;
+let csvOnLoad: (() => void) | null = null;
+
+export function setCsvFetcher(
+  fetch: (ref: string) => Promise<string>,
+  onLoad: () => void,
+): void {
+  csvFetcher = fetch;
+  csvOnLoad = onLoad;
+}
+
+function requestCsv(ref: string): CsvEntry {
+  const hit = csvCache.get(ref);
+  if (hit) return hit;
+  const entry: CsvEntry = { state: csvFetcher ? "loading" : "fail", error: csvFetcher ? undefined : "無檔案讀取管道" };
+  csvCache.set(ref, entry);
+  if (csvFetcher) {
+    csvFetcher(ref).then(
+      (text) => { csvCache.set(ref, { state: "ok", text: String(text) }); csvOnLoad?.(); },
+      (e) => { csvCache.set(ref, { state: "fail", error: e instanceof Error ? e.message : String(e) }); csvOnLoad?.(); },
+    );
+  }
+  return entry;
+}
+
+/** Drop a cached file so the next render re-reads it (e.g. after saving). */
+export function invalidateCsv(ref?: string): void {
+  if (ref) csvCache.delete(ref); else csvCache.clear();
+}
 
 /** Default slider range for a parameter the author didn't bound. */
 export function defaultParamRange(value: number): [number, number] {
@@ -68,12 +110,14 @@ export function parseChartSource(src: string): ChartSpec | string {
   const p: ChartSpec = {
     type: "line", title: "", xLabel: "", yLabel: "",
     xlog: false, ylog: false, yflip: false,
-    xs: [], series: [], plots: [], params: [], dataLines: [],
+    xs: [], series: [], plots: [], params: [], fits: [], dataLines: [],
   };
   let header: string[] | null = null;
   const rows: number[][] = [];
 
   for (const line of lines) {
+    const fit = /^fit\s*[:：]\s*(linear|powerlaw|exp|log)\s*$/i.exec(line);
+    if (fit) { p.fits.push({ kind: fit[1]!.toLowerCase() as FitDef["kind"] }); continue; }
     const plot = PLOT_RE.exec(line);
     if (plot) {
       const body = plot[1]!.trim();
@@ -113,6 +157,7 @@ export function parseChartSource(src: string): ChartSpec | string {
           break;
         }
         case "title": p.title = val; break;
+        case "data": p.dataRef = val; break;
         case "xlabel": p.xLabel = val; break;
         case "ylabel": p.yLabel = val; break;
         case "log": {
@@ -136,6 +181,26 @@ export function parseChartSource(src: string): ChartSpec | string {
     const nums = cells.map(Number);
     if (nums.every((n) => Number.isFinite(n))) { rows.push(nums); p.dataLines.push(line); }
     else if (!rows.length && !header) { header = cells; p.dataLines.push(line); }
+  }
+
+  // External data file: splice its lines in as if they were typed inline.
+  if (p.dataRef) {
+    const entry = requestCsv(p.dataRef);
+    if (entry.state === "ok" && entry.text) {
+      for (const raw of entry.text.split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const cells = line.split(/[,\t]|\s{2,}|\s(?=[-\d.])/).map((c) => c.trim()).filter(Boolean);
+        if (!cells.length) continue;
+        const nums = cells.map(Number);
+        if (nums.every((n) => Number.isFinite(n))) rows.push(nums);
+        else if (!rows.length && !header) header = cells;
+      }
+    } else if (entry.state === "loading") {
+      return `chart: 載入 ${p.dataRef} 中…`;
+    } else {
+      return `chart: 讀取 ${p.dataRef} 失敗（${entry.error ?? "?"}）`;
+    }
   }
 
   if (!rows.length && !p.plots.length) return "chart: 沒有數據列（或至少一條 plot: 函數）";
@@ -175,11 +240,66 @@ export function serializeChart(p: ChartSpec): string {
   for (const prm of p.params) {
     out.push(`param: ${prm.name} = ${prm.value} [${prm.min}, ${prm.max}]`);
   }
+  if (p.dataRef) out.push(`data: ${p.dataRef}`);
+  for (const f of p.fits) out.push(`fit: ${f.kind}`);
   for (const pl of p.plots) {
     out.push(pl.name ? `plot: ${pl.name} = ${pl.exprSrc}` : `plot: ${pl.exprSrc}`);
   }
   out.push(...p.dataLines);
   return out.join("\n");
+}
+
+/** Least-squares fit of the FIRST data series → a plot-compatible expression
+ * (rendered exactly like a `plot:` overlay) + legend labels. Null when the
+ * data can't support the kind (too few points / non-positive values). */
+export function computeFit(p: ChartSpec, kind: FitDef["kind"]):
+  { exprSrc: string; label: string; texLabel: string } | null {
+  const s = p.series[0];
+  if (!s) return null;
+  const pts: Array<[number, number]> = [];
+  p.xs.forEach((x, i) => {
+    const y = s.ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if ((kind === "powerlaw" || kind === "log") && x <= 0) return;
+    if ((kind === "powerlaw" || kind === "exp") && (y as number) <= 0) return;
+    pts.push([x, y as number]);
+  });
+  if (pts.length < 2) return null;
+  const txf = (x: number) => (kind === "powerlaw" || kind === "log" ? Math.log(x) : x);
+  const tyf = (y: number) => (kind === "powerlaw" || kind === "exp" ? Math.log(y) : y);
+  const X = pts.map(([x]) => txf(x)), Y = pts.map(([, y]) => tyf(y));
+  const n0 = X.length;
+  const sx = X.reduce((a, b) => a + b, 0), sy = Y.reduce((a, b) => a + b, 0);
+  const sxx = X.reduce((a, b) => a + b * b, 0);
+  const sxy = X.reduce((a, x, i) => a + x * Y[i]!, 0);
+  const denom = n0 * sxx - sx * sx;
+  if (Math.abs(denom) < 1e-12) return null;
+  const b = (n0 * sxy - sx * sy) / denom;
+  const A = (sy - b * sx) / n0;
+  const s6 = (v: number) => Number(v.toPrecision(6)).toString();
+  const s3 = (v: number) => Number(v.toPrecision(3)).toString();
+  switch (kind) {
+    case "linear":
+      return { exprSrc: `${s6(A)} + ${s6(b)}*x`,
+               label: `fit: y=${s3(A)}+${s3(b)}x`,
+               texLabel: `fit $y=${s3(A)}+${s3(b)}x$` };
+    case "powerlaw": {
+      const a = Math.exp(A);
+      return { exprSrc: `${s6(a)} * x^(${s6(b)})`,
+               label: `fit: y=${s3(a)}·x^${s3(b)}`,
+               texLabel: `fit $y=${s3(a)}\\,x^{${s3(b)}}$` };
+    }
+    case "exp": {
+      const a = Math.exp(A);
+      return { exprSrc: `${s6(a)} * exp(${s6(b)}*x)`,
+               label: `fit: y=${s3(a)}·e^${s3(b)}x`,
+               texLabel: `fit $y=${s3(a)}\\,e^{${s3(b)}x}$` };
+    }
+    case "log":
+      return { exprSrc: `${s6(A)} + ${s6(b)}*ln(x)`,
+               label: `fit: y=${s3(A)}+${s3(b)}·ln x`,
+               texLabel: `fit $y=${s3(A)}+${s3(b)}\\ln x$` };
+  }
 }
 
 /** The x range (raw data units) a plot should span — data extent, manual
@@ -261,6 +381,11 @@ export function renderChart(src: string): string {
     } catch (e) {
       errors.push(`plot ${pl.exprSrc}: ${e instanceof Error ? e.message : e}`);
     }
+  }
+  for (const f of p.fits) {
+    const fit = computeFit(p, f.kind);
+    if (!fit) { errors.push(`fit ${f.kind}: 數據不足或含非正值`); continue; }
+    try { compiled.push({ name: fit.label, ast: parseExpr(fit.exprSrc) }); } catch { /* unreachable */ }
   }
   if (errors.length && !compiled.length && !p.series.length) {
     return `<div class="np-chart-error">${esc(errors.join("；"))}</div>`;

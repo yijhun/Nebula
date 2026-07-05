@@ -34,6 +34,15 @@ const CASES: Case[] = [
   { name: "cjk", md: "# 中文\n\n這是中文與數學 $E=mc^2$ 混排。\n" },
   { name: "raw-latex-env", md: "# Raw\n\n\\begin{equation}\nF = ma\n\\end{equation}\n" },
   { name: "apj-paper", md: "---\ntitle: Accretion Disk\nauthor: A. Astronomer\n---\n# Introduction\n\nWe study disks [@balbus1991] with $T(r)=T_0(r/r_0)^{-q}$.\n", opts: { defaultTemplate: "apj" } },
+  // ── this-era features: charts, fits, diagram tikz, journal templates ──
+  { name: "chart-auto",
+    md: "# SED\n\n```chart\ntype: scatter\nlog: xy\nparam: a = 3e-23\nplot: model = a * x^0.9\nfit: powerlaw\nx, flux, flux_err\n1e11, 2.1e-12, 4e-13\n1e12, 8.5e-12, 1.2e-12\n1e13, 3.2e-11, 5e-12\n```\n" },
+  { name: "diagram-tikz",
+    md: "# Geometry\n\n```tikz\n% nebula-diagram: {\"v\":1,\"objs\":[]}\n\\begin{tikzpicture}[>=stealth, line cap=round]\n\\draw[->, thick] (0,0) -- (4,0);\n\\draw[->, thick] (0,0) -- (0,3);\n\\fill[blue] (2,1.5) circle (1.6pt);\n\\node[above right, blue] at (2,1.5) {$P_1$};\n\\draw[red, dashed] (0,0) -- (2,1.5);\n\\draw (0.7,0) arc[start angle=0, end angle=36.87, radius=0.7];\n\\node at (0.93,0.33) {$\\theta$};\n\\end{tikzpicture}\n```\n" },
+  { name: "mnras-paper",
+    md: "---\ntitle: Infall Kinematics\nauthor: Y. J.\ntemplate: mnras\n---\n# Introduction\n\nInfall [@ulrich1976] with $v_{\\rm LSR} = -17.7$ km/s.\n\n$$\\frac{dn}{dt} = -n_c k_{01}$$\n" },
+  { name: "chart-fit-linear",
+    md: "# Fit\n\n```chart\ntype: scatter\nfit: linear\nx, y\n0, 1.1\n1, 2.9\n2, 5.2\n3, 6.8\n```\n" },
 ];
 
 let pass = 0, fail = 0;

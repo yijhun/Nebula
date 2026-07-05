@@ -460,6 +460,19 @@ final class EditorModel: ObservableObject, Identifiable {
                     }
                 }
             }
+        case "vault.readText":
+            // Read a text file from the vault (chart `data: obs.csv`). Resolved
+            // like images: note dir → vault root → basename search. 2MB cap.
+            let ref = params["ref"] as? String ?? ""
+            let base = currentURL?.deletingLastPathComponent().path ?? vaultRoot?.path ?? ""
+            if !ref.isEmpty,
+               let url = ImageSchemeHandler.resolve(ref: ref, base: base, vault: vaultRoot?.path ?? ""),
+               let data = try? Data(contentsOf: url), data.count <= 2_000_000,
+               let text = String(data: data, encoding: .utf8) {
+                resolveRPC(id, ok: true, payload: text)
+            } else {
+                resolveRPC(id, ok: false, payload: "找不到或無法讀取：\(ref)")
+            }
         case "zotero.search":
             let query = params["query"] as? String ?? ""
             ZoteroService.search(query) { [weak self] items in

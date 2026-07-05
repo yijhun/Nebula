@@ -32,6 +32,7 @@ import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
+import { setCsvFetcher, invalidateCsv } from "./chart.js";
 import { openDiagramStudio } from "./diagramStudio.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
@@ -523,6 +524,7 @@ const api = {
   setNoteList(json: string): void {
     try {
       setNoteNames(JSON.parse(json) as string[]);
+      invalidateCsv();  // vault changed — chart data files may have too
       scheduleRender(); // re-evaluate broken-link styling
     } catch {
       /* ignore */
@@ -641,6 +643,13 @@ function boot(): void {
   if (!parent) return;
 
   setupSplitDivider(appEl, parent);
+
+  // Chart `data: file.csv` → read through the native vault bridge; re-render
+  // when a file arrives.
+  setCsvFetcher(
+    (ref) => call("vault.readText", { ref }) as Promise<string>,
+    () => scheduleRender(),
+  );
 
   // Pop-out grip on the preview corner — click OR drag it out to detach the
   // live preview window (the drag shows a ghost card following the cursor).
