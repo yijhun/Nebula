@@ -7,6 +7,7 @@
  * `% nebula-diagram3d: {...}` comment so the studio can reopen it.
  */
 import type { EditorView } from "@codemirror/view";
+import { makeHistory } from "./studioHistory.js";
 
 type Color = "black" | "blue" | "red" | "green";
 type V3 = [number, number, number];
@@ -288,6 +289,10 @@ export function openDiagram3dStudio(view: EditorView): void {
   let height = 0;                       // z used for the next placed object
   let pending: V3 | null = null;        // first click of 2-click tools
   let selected = -1;
+  const hist = makeHistory(
+    () => JSON.stringify({ objs, cam }),
+    (json) => { const st = JSON.parse(json) as { objs: Obj3[]; cam: Cam }; objs.splice(0, objs.length, ...st.objs); cam.az = st.cam.az; cam.el = st.cam.el; selected = -1; pending = null; for (const sl of camSliders) sl._sync?.(); draw(); },
+  );
 
   const light = document.body.classList.contains("np-light");
   const overlay = document.createElement("div");
@@ -333,8 +338,17 @@ export function openDiagram3dStudio(view: EditorView): void {
 
   const delBtn = document.createElement("button"); delBtn.textContent = "刪除選取";
   delBtn.style.cssText = "border:none;background:rgba(220,38,38,0.18);color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
-  delBtn.addEventListener("click", () => { if (selected >= 0) { objs.splice(selected, 1); selected = -1; draw(); } });
+  delBtn.addEventListener("click", () => { if (selected >= 0) { hist.capture(); objs.splice(selected, 1); hist.commit(); selected = -1; draw(); } });
   bar.appendChild(delBtn);
+
+  const iconBtn = (label: string, hintTxt: string, fn: () => void): void => {
+    const b = document.createElement("button"); b.textContent = label; b.title = hintTxt;
+    b.style.cssText = "border:none;background:rgba(127,127,127,0.15);color:inherit;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:14px;";
+    b.addEventListener("click", () => { fn(); draw(); });
+    bar.appendChild(b);
+  };
+  iconBtn("↶", "復原 ⌘Z", () => hist.undo());
+  iconBtn("↷", "重做 ⇧⌘Z", () => hist.redo());
 
   // camera sliders
   const camRow = document.createElement("div");
@@ -361,7 +375,11 @@ export function openDiagram3dStudio(view: EditorView): void {
   panel.appendChild(svg);
 
   const actions = document.createElement("div");
-  actions.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
+  actions.style.cssText = "display:flex;gap:8px;align-items:center;";
+  const kbd = document.createElement("span");
+  kbd.textContent = "拖曳 = 旋轉 · ⌘Z 復原 · Delete 刪除 · Esc 關閉";
+  kbd.style.cssText = "opacity:.55;font-size:11px;margin-right:auto;";
+  actions.appendChild(kbd);
   const mkBtn = (label: string, primary: boolean, fn: () => void): void => {
     const b = document.createElement("button"); b.textContent = label;
     b.style.cssText = primary ? "background:#4a9eff;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;" : "background:rgba(127,127,127,0.15);color:inherit;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;";
@@ -418,6 +436,7 @@ export function openDiagram3dStudio(view: EditorView): void {
   let down: { cx: number; cy: number; az: number; el: number } | null = null;
   let moved = false;
   svg.addEventListener("pointerdown", (e: PointerEvent) => {
+    hist.capture();
     down = { cx: e.clientX, cy: e.clientY, az: cam.az, el: cam.el }; moved = false;
     svg.setPointerCapture(e.pointerId);
   });
@@ -433,24 +452,29 @@ export function openDiagram3dStudio(view: EditorView): void {
   });
   svg.addEventListener("pointerup", (e: PointerEvent) => {
     const wasDown = down; down = null;
-    if (!wasDown || moved) return;    // a rotate, not a click
+    if (!wasDown) return;
+    if (moved) { hist.commit(); return; }   // a rotate, not a click
     const [sx, sy] = fromPx(e.clientX, e.clientY);
     if (tool === "rotate") {
       selected = hit(sx, sy);
       if (selected >= 0) colorSel.value = objs[selected]!.color;
-      draw();
+      hist.commit(); draw();
       return;
     }
     const g = unprojectGround(sx, sy, cam);
     if (!g) { hint.textContent = "仰角太低，無法定位地面點——先抬高仰角。"; return; }
-    place(g); syncBar(); draw();
+    place(g); hist.commit(); syncBar(); draw();
   });
+  svg.addEventListener("lostpointercapture", () => { down = null; });
 
   document.addEventListener("keydown", onKey);
   function onKey(e: KeyboardEvent): void {
     if (e.key === "Escape") { close(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault(); if (e.shiftKey) hist.redo(); else hist.undo(); return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && selected >= 0 && !(e.target instanceof HTMLInputElement)) {
-      e.preventDefault(); objs.splice(selected, 1); selected = -1; draw();
+      e.preventDefault(); hist.capture(); objs.splice(selected, 1); hist.commit(); selected = -1; draw();
     }
   }
 

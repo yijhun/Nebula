@@ -10,6 +10,7 @@
  * (i.e. overwritten) on the next studio save — the comment says so.
  */
 import type { EditorView } from "@codemirror/view";
+import { makeHistory } from "./studioHistory.js";
 
 // ── model ─────────────────────────────────────────────────────────────────
 
@@ -394,6 +395,10 @@ export function openDiagramStudio(view: EditorView): void {
   let selected = -1;
   let dragOff: { dx: number; dy: number } | null = null;
   let activeHandle: { x: number; y: number; set(nx: number, ny: number): void } | null = null;
+  const hist = makeHistory(
+    () => JSON.stringify(objs),
+    (json) => { objs.splice(0, objs.length, ...(JSON.parse(json) as Obj[])); selected = -1; activeHandle = null; pending = null; pending2 = null; polyPending = []; draw(); },
+  );
 
   // overlay scaffolding — panel follows the app theme; the CANVAS itself is
   // always white paper with dark ink (that's what the figure will look like
@@ -486,10 +491,12 @@ export function openDiagramStudio(view: EditorView): void {
   dupBtn.style.cssText = "border:none;background:rgba(127,127,127,0.15);color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
   dupBtn.addEventListener("click", () => {
     if (selected < 0) return;
+    hist.capture();
     const copy = JSON.parse(JSON.stringify(objs[selected]!)) as Obj;
     moveObj(copy, 0.5, -0.5);
     objs.push(copy);
     selected = objs.length - 1;
+    hist.commit();
     draw();
   });
   bar.appendChild(dupBtn);
@@ -499,6 +506,16 @@ export function openDiagramStudio(view: EditorView): void {
   delBtn.style.cssText = "border:none;background:rgba(220,38,38,0.18);color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
   delBtn.addEventListener("click", deleteSelected);
   bar.appendChild(delBtn);
+
+  const iconBtn = (label: string, hintTxt: string, fn: () => void): void => {
+    const b = document.createElement("button");
+    b.textContent = label; b.title = hintTxt;
+    b.style.cssText = "border:none;background:rgba(127,127,127,0.15);color:inherit;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:14px;";
+    b.addEventListener("click", () => { fn(); draw(); });
+    bar.appendChild(b);
+  };
+  iconBtn("↶", "復原 ⌘Z", () => hist.undo());
+  iconBtn("↷", "重做 ⇧⌘Z", () => hist.redo());
 
   const hint = document.createElement("div");
   hint.style.cssText = "opacity:.65;font-size:12px;min-height:16px;";
@@ -513,9 +530,13 @@ export function openDiagramStudio(view: EditorView): void {
     "border-radius:6px;cursor:crosshair;touch-action:none;";
   panel.appendChild(svg);
 
-  // actions
+  // actions + keyboard hint
   const actions = document.createElement("div");
-  actions.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
+  actions.style.cssText = "display:flex;gap:8px;align-items:center;";
+  const kbd = document.createElement("span");
+  kbd.textContent = "⌘Z 復原 · ⇧⌘Z 重做 · Delete 刪除 · Esc 關閉";
+  kbd.style.cssText = "opacity:.55;font-size:11px;margin-right:auto;";
+  actions.appendChild(kbd);
   const mkBtn = (label: string, primary: boolean, fn: () => void): void => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -633,7 +654,7 @@ export function openDiagramStudio(view: EditorView): void {
   }
 
   function deleteSelected(): void {
-    if (selected >= 0) { objs.splice(selected, 1); selected = -1; draw(); }
+    if (selected >= 0) { hist.capture(); objs.splice(selected, 1); hist.commit(); selected = -1; draw(); }
   }
 
   interface Handle { x: number; y: number; set(nx: number, ny: number): void }
@@ -677,6 +698,7 @@ export function openDiagramStudio(view: EditorView): void {
 
   // pointer interaction
   svg.addEventListener("pointerdown", (e: PointerEvent) => {
+    hist.capture();
     const [x, y] = toWorld(e);
     if (tool === "select") {
       // First: a resize handle of the already-selected object?
@@ -765,7 +787,9 @@ export function openDiagramStudio(view: EditorView): void {
   // Double-click closes a polygon-in-progress (≥3 points).
   svg.addEventListener("dblclick", () => {
     if (tool === "poly" && polyPending.length >= 3) {
+      hist.capture();
       objs.push({ t: "poly", pts: polyPending, dash: dashed, color });
+      hist.commit();
       polyPending = [];
       syncBar(); draw();
     }
@@ -781,7 +805,7 @@ export function openDiagramStudio(view: EditorView): void {
       draw();
     }
   });
-  svg.addEventListener("pointerup", () => { dragOff = null; activeHandle = null; });
+  svg.addEventListener("pointerup", () => { dragOff = null; activeHandle = null; hist.commit(); });
   // Capture can be lost without a pointerup (window blur, tool switch) — reset
   // so the next move in select mode doesn't resume dragging the old object.
   svg.addEventListener("lostpointercapture", () => { dragOff = null; activeHandle = null; });
@@ -793,7 +817,9 @@ export function openDiagramStudio(view: EditorView): void {
       const cur = o.t === "lbl" ? o.text : o.label;
       const next = window.prompt("編輯文字", cur);
       if (next !== null) {
+        hist.capture();
         if (o.t === "lbl") o.text = next; else o.label = next;
+        hist.commit();
         draw();
       }
     }
@@ -801,6 +827,9 @@ export function openDiagramStudio(view: EditorView): void {
   document.addEventListener("keydown", onKey);
   function onKey(e: KeyboardEvent): void {
     if (e.key === "Escape") { close(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault(); if (e.shiftKey) hist.redo(); else hist.undo(); return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && selected >= 0
         && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
       e.preventDefault();
