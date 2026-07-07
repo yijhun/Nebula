@@ -393,6 +393,7 @@ export function openDiagramStudio(view: EditorView): void {
   let showGrid = true;
   let selected = -1;
   let dragOff: { dx: number; dy: number } | null = null;
+  let activeHandle: { x: number; y: number; set(nx: number, ny: number): void } | null = null;
 
   // overlay scaffolding — panel follows the app theme; the CANVAS itself is
   // always white paper with dark ink (that's what the figure will look like
@@ -635,10 +636,57 @@ export function openDiagramStudio(view: EditorView): void {
     if (selected >= 0) { objs.splice(selected, 1); selected = -1; draw(); }
   }
 
+  interface Handle { x: number; y: number; set(nx: number, ny: number): void }
+  /** Resize handles for an object (world coords). Empty = nothing to resize. */
+  function handlesFor(o: Obj): Handle[] {
+    const S = SNAP;
+    switch (o.t) {
+      case "seg": case "arr": case "rect":
+        return [
+          { x: o.x1, y: o.y1, set: (nx, ny) => { o.x1 = nx; o.y1 = ny; } },
+          { x: o.x2, y: o.y2, set: (nx, ny) => { o.x2 = nx; o.y2 = ny; } },
+        ];
+      case "circ": case "cloud":
+        return [{ x: o.x + o.r, y: o.y, set: (nx, ny) => { o.r = Math.max(S, Math.hypot(nx - o.x, ny - o.y)); } }];
+      case "sphere":
+        return [{ x: o.x + o.r, y: o.y, set: (nx, ny) => { o.r = Math.max(S, Math.hypot(nx - o.x, ny - o.y)); } }];
+      case "ell":
+        return [
+          { x: o.x + o.rx, y: o.y, set: (nx) => { o.rx = Math.max(S, Math.abs(nx - o.x)); } },
+          { x: o.x, y: o.y + o.ry, set: (_nx, ny) => { o.ry = Math.max(S, Math.abs(ny - o.y)); } },
+        ];
+      case "ang": {
+        const mid = (((o.a2 >= o.a1 ? o.a2 : o.a2 + 360) + o.a1) / 2) * Math.PI / 180;
+        return [{ x: o.x + o.r * Math.cos(mid), y: o.y + o.r * Math.sin(mid),
+                  set: (nx, ny) => { o.r = Math.max(0.3, Math.hypot(nx - o.x, ny - o.y)); } }];
+      }
+      case "axes3d":
+        return [{ x: o.x + o.len, y: o.y, set: (nx) => { o.len = Math.max(0.5, nx - o.x); } }];
+      case "cuboid":
+        return [
+          { x: o.x + o.w, y: o.y + o.h, set: (nx, ny) => { o.w = Math.max(S, nx - o.x); o.h = Math.max(S, ny - o.y); } },
+          { x: o.x + o.w + o.d * DEPTH_DX, y: o.y + o.h + o.d * DEPTH_DY,
+            set: (nx) => { o.d = Math.max(S, (nx - o.x - o.w) / DEPTH_DX); } },
+        ];
+      case "poly":
+        return o.pts.map((_, k) => ({ x: o.pts[k]![0], y: o.pts[k]![1], set: (nx: number, ny: number) => { o.pts[k] = [nx, ny]; } }));
+      default:
+        return [];
+    }
+  }
+
   // pointer interaction
   svg.addEventListener("pointerdown", (e: PointerEvent) => {
     const [x, y] = toWorld(e);
     if (tool === "select") {
+      // First: a resize handle of the already-selected object?
+      if (selected >= 0) {
+        for (const h of handlesFor(objs[selected]!)) {
+          if (Math.hypot(h.x - x, h.y - y) < 0.3) {
+            activeHandle = h; svg.setPointerCapture(e.pointerId); return;
+          }
+        }
+      }
       selected = hitTest(x, y);
       if (selected >= 0) {
         const [cx, cy] = objCenter(objs[selected]!);
@@ -723,18 +771,20 @@ export function openDiagramStudio(view: EditorView): void {
     }
   });
   svg.addEventListener("pointermove", (e: PointerEvent) => {
-    if (tool === "select" && dragOff && selected >= 0) {
-      const [x, y] = toWorld(e);
+    if (tool !== "select") return;
+    const [x, y] = toWorld(e);
+    if (activeHandle) { activeHandle.set(x, y); draw(); return; }
+    if (dragOff && selected >= 0) {
       const o = objs[selected]!;
       const [cx, cy] = objCenter(o);
       moveObj(o, x + dragOff.dx - cx, y + dragOff.dy - cy);
       draw();
     }
   });
-  svg.addEventListener("pointerup", () => { dragOff = null; });
+  svg.addEventListener("pointerup", () => { dragOff = null; activeHandle = null; });
   // Capture can be lost without a pointerup (window blur, tool switch) — reset
   // so the next move in select mode doesn't resume dragging the old object.
-  svg.addEventListener("lostpointercapture", () => { dragOff = null; });
+  svg.addEventListener("lostpointercapture", () => { dragOff = null; activeHandle = null; });
   svg.addEventListener("dblclick", (e: MouseEvent) => {
     const [x, y] = toWorld(e);
     const i = hitTest(x, y);
@@ -928,6 +978,17 @@ export function openDiagramStudio(view: EditorView): void {
         }
       }
     });
+    // resize handles for the selected object (blue squares)
+    if (tool === "select" && selected >= 0 && objs[selected]) {
+      for (const h of handlesFor(objs[selected]!)) {
+        const [px, py] = toPx(h.x, h.y);
+        const sq = document.createElementNS(NSVG, "rect");
+        sq.setAttribute("x", (px - 4).toFixed(1)); sq.setAttribute("y", (py - 4).toFixed(1));
+        sq.setAttribute("width", "8"); sq.setAttribute("height", "8");
+        sq.setAttribute("fill", "#4a9eff"); sq.setAttribute("stroke", "#fff"); sq.setAttribute("stroke-width", "1");
+        svg.appendChild(sq);
+      }
+    }
     // polygon in progress
     if (polyPending.length) {
       for (const [x, y] of polyPending) { const [px, py] = toPx(x, y); const c = document.createElementNS(NSVG, "circle"); c.setAttribute("cx", String(px)); c.setAttribute("cy", String(py)); c.setAttribute("r", "3.5"); c.setAttribute("fill", "#4a9eff"); svg.appendChild(c); }
