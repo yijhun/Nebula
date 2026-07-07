@@ -553,6 +553,11 @@ final class EditorModel: ObservableObject, Identifiable {
         webView?.evaluateJavaScript("window.notepro.diagramStudio()")
     }
 
+    /// Open the 3D figure editor (drag to rotate the view → baked TikZ).
+    func diagram3dStudio() {
+        webView?.evaluateJavaScript("window.notepro.diagram3dStudio()")
+    }
+
     /// Translate the ```chart block at the cursor into a ```tikz block below it.
     func chartToTikz() {
         webView?.evaluateJavaScript("window.notepro.chartToTikz()") { [weak self] result, _ in

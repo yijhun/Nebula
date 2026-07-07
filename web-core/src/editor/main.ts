@@ -34,6 +34,7 @@ import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
 import { setCsvFetcher, invalidateCsv } from "./chart.js";
 import { openDiagramStudio } from "./diagramStudio.js";
+import { openDiagram3dStudio } from "./diagram3d.js";
 import { openAI } from "./ai.js";
 import { openCite } from "./cite.js";
 import { latexAutocomplete } from "./complete.js";
@@ -284,6 +285,8 @@ const api = {
   /** Open the geometry/diagram editor. Reopens the model when the cursor is
    * inside a studio-generated ```tikz block; otherwise starts a new diagram. */
   diagramStudio(): void { openDiagramStudio(view); },
+  /** Open the 3D figure editor (drag to rotate the view; emits baked TikZ). */
+  diagram3dStudio(): void { openDiagram3dStudio(view); },
   /** The citekey at/around the cursor — from `[@key]`, `[@key; @key2]`, or
    * `\cite{key}` / `\citep{...}` etc. Returns "" if the cursor isn't on one.
    * Used by "open in Zotero". */
@@ -735,7 +738,8 @@ function boot(): void {
       const wrap = chartEdit.closest("[data-line]") as HTMLElement | null;
       const line = Number(wrap?.getAttribute("data-line"));
       if (Number.isFinite(line)) jumpEditorToLine(line + 1);   // land inside the block
-      if (chartEdit.classList.contains("np-diagram-edit")) openDiagramStudio(view);
+      if (chartEdit.classList.contains("np-diagram3d-edit")) openDiagram3dStudio(view);
+      else if (chartEdit.classList.contains("np-diagram-edit")) openDiagramStudio(view);
       else openChartStudio(view);
     }
   });

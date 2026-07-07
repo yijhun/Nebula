@@ -118,7 +118,7 @@ let EN: [String: String] = [
     "投稿前檢查": "Pre-submission Check",
     // Table menu
     "圖表 Chart": "Chart", "互動圖表編輯器": "Interactive Chart Studio",
-    "圖解編輯器（幾何示意圖）": "Diagram Studio (geometry)",
+    "圖解編輯器（幾何示意圖）": "Diagram Studio (geometry)", "3D 圖編輯器": "3D Figure Editor",
     "這篇引用了哪些（references）": "Its references", "哪些論文引用這篇（citations）": "Cited by",
     "轉成 TikZ（插在下方）": "Convert to TikZ (insert below)",
     "表格 Table": "Table", "格式化表格": "Format Table",

@@ -21,6 +21,7 @@ import { noteExists } from "./notes.js";
 import { tex2svg } from "./mathjax.js";
 import { renderChart } from "./chart.js";
 import { parseDiagramModel, diagramToSvg } from "./diagramStudio.js";
+import { parseDiagram3dModel, diagram3dToSvg } from "./diagram3d.js";
 
 /** Matches a `[@key]`, `[@a; @b]`, `[@key, p. 5]` citation group. */
 const CITE_RE = /\[([^\]\[\n]*@[^\]\n]*)\]/g;
@@ -129,9 +130,13 @@ function rehypeCharts() {
           `<button class="np-chart-edit" title="互動編輯（滑桿調參數）">✎ 編輯</button>`;
       } else {
         const model = parseDiagramModel(src);
+        const model3 = model ? null : parseDiagram3dModel(src);
         html = model && model.length
           ? diagramToSvg(model) +
             `<button class="np-chart-edit np-diagram-edit" title="用圖解編輯器打開">✎ 編輯</button>`
+          : model3
+          ? diagram3dToSvg(model3.objs, model3.cam) +
+            `<button class="np-chart-edit np-diagram3d-edit" title="用 3D 編輯器打開">✎ 編輯</button>`
           : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
       }
       const frag = fromHtml(html, { fragment: true });
