@@ -168,6 +168,29 @@ export function openChartStudio(view: EditorView): void {
   right.appendChild(row("x 標籤", textInput(spec.xLabel, (v) => { spec.xLabel = v; })));
   right.appendChild(row("y 標籤", textInput(spec.yLabel, (v) => { spec.yLabel = v; })));
 
+  // external CSV file (vault-relative) — overrides the inline data below
+  const dataRefInput = textInput(spec.dataRef ?? "", (v) => {
+    const t = v.trim();
+    spec.dataRef = t || undefined;
+  });
+  dataRefInput.placeholder = "obs.csv（vault 內，留空=用下方手打）";
+  right.appendChild(row("資料檔", dataRefInput));
+
+  // fit selector (least-squares over the first data series)
+  const fitSel = document.createElement("select");
+  fitSel.style.cssText = "flex:1;background:rgba(127,127,127,0.12);color:inherit;border:1px solid rgba(127,127,127,0.3);border-radius:5px;padding:3px;";
+  for (const [v, label] of [["", "無"], ["linear", "線性 y=a+bx"], ["powerlaw", "冪律 y=a·xᵇ"], ["exp", "指數 y=a·eᵇˣ"], ["log", "對數 y=a+b·ln x"]] as const) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    if ((spec.fits[0]?.kind ?? "") === v) o.selected = true;
+    fitSel.appendChild(o);
+  }
+  fitSel.addEventListener("change", () => {
+    spec.fits = fitSel.value ? [{ kind: fitSel.value as "linear" | "powerlaw" | "exp" | "log" }] : [];
+    refresh();
+  });
+  right.appendChild(row("擬合", fitSel));
+
   // data textarea
   const dataLabel = document.createElement("div");
   dataLabel.textContent = "數據（表頭 + 數列；欄名以 err 結尾 = 誤差棒）";

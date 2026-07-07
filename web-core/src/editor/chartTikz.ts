@@ -71,7 +71,10 @@ export function chartToTikz(src: string): string {
   for (const f of p.fits) {
     const fit = computeFit(p, f.kind);
     if (!fit) { lines.push(`% fit ${f.kind} 略過（數據不足或含非正值）`); continue; }
-    lines.push(`\\addplot[smooth, thick, dashed, domain=${a}:${b}, samples=120] { ${toPgf(parseExpr(fit.exprSrc))} };`);
+    let fitPgf: string;
+    try { fitPgf = toPgf(parseExpr(fit.exprSrc)); }
+    catch { lines.push(`% fit ${f.kind} 略過（無法轉換）`); continue; }
+    lines.push(`\\addplot[smooth, thick, dashed, domain=${a}:${b}, samples=120] { ${fitPgf} };`);
     if (legendNames.length) lines.push(`\\addlegendentry{${fit.texLabel}}`);
   }
   lines.push(`\\end{axis}`);

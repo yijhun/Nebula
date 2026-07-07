@@ -79,15 +79,25 @@ export function setCsvFetcher(
   csvOnLoad = onLoad;
 }
 
+// Generation counter per ref — an invalidate() during an in-flight fetch bumps
+// it so the stale .then/.catch can't resurrect the entry with old text.
+const csvGen = new Map<string, number>();
+
 function requestCsv(ref: string): CsvEntry {
   const hit = csvCache.get(ref);
   if (hit) return hit;
   const entry: CsvEntry = { state: csvFetcher ? "loading" : "fail", error: csvFetcher ? undefined : "無檔案讀取管道" };
   csvCache.set(ref, entry);
   if (csvFetcher) {
+    const gen = (csvGen.get(ref) ?? 0) + 1;
+    csvGen.set(ref, gen);
+    const settle = (e: CsvEntry): void => {
+      if (csvGen.get(ref) !== gen) return;   // invalidated mid-flight → drop
+      csvCache.set(ref, e); csvOnLoad?.();
+    };
     csvFetcher(ref).then(
-      (text) => { csvCache.set(ref, { state: "ok", text: String(text) }); csvOnLoad?.(); },
-      (e) => { csvCache.set(ref, { state: "fail", error: e instanceof Error ? e.message : String(e) }); csvOnLoad?.(); },
+      (text) => settle({ state: "ok", text: String(text) }),
+      (e) => settle({ state: "fail", error: e instanceof Error ? e.message : String(e) }),
     );
   }
   return entry;
@@ -95,7 +105,8 @@ function requestCsv(ref: string): CsvEntry {
 
 /** Drop a cached file so the next render re-reads it (e.g. after saving). */
 export function invalidateCsv(ref?: string): void {
-  if (ref) csvCache.delete(ref); else csvCache.clear();
+  if (ref) { csvCache.delete(ref); csvGen.set(ref, (csvGen.get(ref) ?? 0) + 1); }
+  else { csvCache.clear(); for (const k of csvGen.keys()) csvGen.set(k, (csvGen.get(k) ?? 0) + 1); }
 }
 
 /** Default slider range for a parameter the author didn't bound. */

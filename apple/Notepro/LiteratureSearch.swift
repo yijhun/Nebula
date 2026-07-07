@@ -74,6 +74,69 @@ enum LiteratureSearch {
         }.resume()
     }
 
+    /// ADS "citation network": the references OF a paper, or the papers that
+    /// CITE it. `mode` is "references" or "citations".
+    static func adsRelated(_ bibcode: String, mode: String,
+                           completion: @escaping (Result<[Paper], Error>) -> Void) {
+        let token = adsToken
+        guard !token.isEmpty else {
+            return DispatchQueue.main.async { completion(.failure(ADSError.noToken)) }
+        }
+        // `q=references(bibcode:X)` / `q=citations(bibcode:X)` is ADS's operator syntax.
+        let op = mode == "citations" ? "citations" : "references"
+        let raw = "\(op)(bibcode:\(bibcode))"
+        let q = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let fl = "title,author,year,bibcode,abstract,doi"
+        guard let url = URL(string: "https://api.adsabs.harvard.edu/v1/search/query?q=\(q)&rows=50&sort=date+desc&fl=\(fl)") else {
+            return DispatchQueue.main.async { completion(.failure(ADSError.badResponse)) }
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 15
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            DispatchQueue.main.async {
+                if (resp as? HTTPURLResponse)?.statusCode == 401 { return completion(.failure(ADSError.unauthorized)) }
+                guard let data,
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let response = obj["response"] as? [String: Any],
+                      let docs = response["docs"] as? [[String: Any]] else {
+                    return completion(.failure(ADSError.badResponse))
+                }
+                let papers = docs.map { d -> Paper in
+                    let bibcode = d["bibcode"] as? String ?? ""
+                    return Paper(title: (d["title"] as? [String])?.first ?? "",
+                                 authors: d["author"] as? [String] ?? [],
+                                 year: d["year"] as? String ?? "",
+                                 abstract: d["abstract"] as? String ?? "",
+                                 identifier: bibcode,
+                                 doi: (d["doi"] as? [String])?.first ?? "",
+                                 url: "https://ui.adsabs.harvard.edu/abs/\(bibcode)", source: "ADS")
+                }
+                completion(.success(papers))
+            }
+        }.resume()
+    }
+
+    /// Download an arXiv paper's PDF to `dir`, returning the saved file URL.
+    /// `id` is the arXiv id (e.g. "2101.01234"); works only for `source==arXiv`.
+    static func downloadArxivPDF(id: String, to dir: URL,
+                                 completion: @escaping (URL?) -> Void) {
+        let clean = id.replacingOccurrences(of: #"v\d+$"#, with: "", options: .regularExpression)
+        guard !clean.isEmpty, let url = URL(string: "https://arxiv.org/pdf/\(clean).pdf") else {
+            return DispatchQueue.main.async { completion(nil) }
+        }
+        URLSession.shared.dataTask(with: url) { data, resp, _ in
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            guard ok, let data, data.starts(with: [0x25, 0x50, 0x44, 0x46]) else {  // %PDF
+                return DispatchQueue.main.async { completion(nil) }
+            }
+            let safe = clean.replacingOccurrences(of: "/", with: "_")
+            let dest = dir.appendingPathComponent("arXiv-\(safe).pdf")
+            try? data.write(to: dest)
+            DispatchQueue.main.async { completion(FileManager.default.fileExists(atPath: dest.path) ? dest : nil) }
+        }.resume()
+    }
+
     /// ADS canonical BibTeX for a bibcode (uses ADS's export endpoint).
     static func adsBibtex(_ bibcode: String, completion: @escaping (String?) -> Void) {
         let token = adsToken

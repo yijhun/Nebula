@@ -238,6 +238,12 @@ struct LiteratureSearchView: View {
                 Text(p.authorLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 if !p.year.isEmpty { Text("· \(p.year)").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
+                if p.source == "ADS" {
+                    Button { showRelated(p, "references") } label: { Image(systemName: "arrow.down.left.circle") }
+                        .controlSize(.small).help("這篇引用了哪些（references）")
+                    Button { showRelated(p, "citations") } label: { Image(systemName: "arrow.up.right.circle") }
+                        .controlSize(.small).help("哪些論文引用這篇（citations）")
+                }
                 Button { importPaper(p) } label: { Label("匯入並引用", systemImage: "square.and.arrow.down") }
                     .controlSize(.small).disabled(vault.rootURL == nil)
             }
@@ -246,6 +252,19 @@ struct LiteratureSearchView: View {
             }
         }
         .padding(.vertical, 3)
+    }
+
+    private func showRelated(_ p: Paper, _ mode: String) {
+        busy = true; status = mode == "citations" ? "找引用這篇的論文…" : "找這篇的參考文獻…"
+        LiteratureSearch.adsRelated(p.identifier, mode: mode) { result in
+            busy = false
+            switch result {
+            case .success(let r):
+                results = r
+                status = r.isEmpty ? "沒有結果" : "\(mode == "citations" ? "被引用" : "參考文獻")：\(r.count) 篇"
+            case .failure(let e): status = "⚠ \(e.localizedDescription)"
+            }
+        }
     }
 
     private func run() {
@@ -317,6 +336,23 @@ struct LiteratureSearchView: View {
         editor.insertCitation(key)
         status = "已匯入 [@\(key)] — references.bib + 文獻筆記"
         if let url { onOpen(url) }
+        // 4. arXiv → fetch the PDF into the vault and link it from the note.
+        if p.source == "arXiv", let noteURL = url {
+            let pdfDir = root.appendingPathComponent("PDFs", isDirectory: true)
+            try? FileManager.default.createDirectory(at: pdfDir, withIntermediateDirectories: true)
+            LiteratureSearch.downloadArxivPDF(id: p.identifier, to: pdfDir) { saved in
+                guard let saved else { return }
+                if var note = try? String(contentsOf: noteURL, encoding: .utf8) {
+                    let rel = "PDFs/\(saved.lastPathComponent)"
+                    note = note.replacingOccurrences(
+                        of: "`[@\(key)]`",
+                        with: "`[@\(key)]` · [📄 PDF](\(rel))")
+                    try? note.write(to: noteURL, atomically: true, encoding: .utf8)
+                    vault.refresh()
+                    if editor.currentURL == noteURL { editor.open(noteURL) }
+                }
+            }
+        }
     }
 
     private func bibKey(_ bib: String) -> String? {

@@ -463,15 +463,31 @@ final class EditorModel: ObservableObject, Identifiable {
         case "vault.readText":
             // Read a text file from the vault (chart `data: obs.csv`). Resolved
             // like images: note dir → vault root → basename search. 2MB cap.
+            // SECURITY: reject path escapes and anything resolving OUTSIDE the
+            // vault (a note must not read arbitrary files via the bridge).
             let ref = params["ref"] as? String ?? ""
             let base = currentURL?.deletingLastPathComponent().path ?? vaultRoot?.path ?? ""
-            if !ref.isEmpty,
-               let url = ImageSchemeHandler.resolve(ref: ref, base: base, vault: vaultRoot?.path ?? ""),
-               let data = try? Data(contentsOf: url), data.count <= 2_000_000,
-               let text = String(data: data, encoding: .utf8) {
-                resolveRPC(id, ok: true, payload: text)
-            } else {
-                resolveRPC(id, ok: false, payload: "找不到或無法讀取：\(ref)")
+            let vaultPath = vaultRoot?.path ?? ""
+            guard !ref.isEmpty, !ref.contains("..") else {
+                resolveRPC(id, ok: false, payload: "不允許的路徑：\(ref)"); return
+            }
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                var payload = "找不到或無法讀取：\(ref)"
+                var ok = false
+                if let url = ImageSchemeHandler.resolve(ref: ref, base: base, vault: vaultPath) {
+                    let resolved = url.standardizedFileURL.path
+                    // Must live inside the vault (or the note's own folder).
+                    let insideVault = !vaultPath.isEmpty && resolved.hasPrefix(vaultPath + "/")
+                    let insideNote = !base.isEmpty && resolved.hasPrefix(base + "/")
+                    if insideVault || insideNote,
+                       let data = try? Data(contentsOf: url), data.count <= 2_000_000,
+                       let text = String(data: data, encoding: .utf8) {
+                        payload = text; ok = true
+                    } else if !(insideVault || insideNote) {
+                        payload = "檔案在 vault 之外，已拒絕：\(ref)"
+                    }
+                }
+                DispatchQueue.main.async { self?.resolveRPC(id, ok: ok, payload: payload) }
             }
         case "zotero.search":
             let query = params["query"] as? String ?? ""

@@ -22,7 +22,41 @@ type Obj =
   | { t: "ell"; x: number; y: number; rx: number; ry: number; dash: boolean; color: Color }
   | { t: "lbl"; x: number; y: number; text: string; color: Color }
   /** Angle mark: CCW arc from a1° to a2° around vertex (x,y). */
-  | { t: "ang"; x: number; y: number; a1: number; a2: number; r: number; label: string; color: Color };
+  | { t: "ang"; x: number; y: number; a1: number; a2: number; r: number; label: string; color: Color }
+  /** Rectangle by two opposite corners. */
+  | { t: "rect"; x1: number; y1: number; x2: number; y2: number; dash: boolean; color: Color }
+  /** Closed polygon through the given points (schematic beams, regions). */
+  | { t: "poly"; pts: Array<[number, number]>; dash: boolean; color: Color }
+  /** Gas/dust cloud — a bumpy closed blob (center + mean radius + a seed so
+   * the bumps are stable across re-renders). */
+  | { t: "cloud"; x: number; y: number; r: number; seed: number; dash: boolean; color: Color }
+  // ── 3D-look helpers (oblique projection, no 3D engine) ──
+  /** Isometric-ish x/y/z axis triad at origin (x,y). */
+  | { t: "axes3d"; x: number; y: number; len: number; color: Color }
+  /** Sphere: outline circle + equator ellipse (star/planet). */
+  | { t: "sphere"; x: number; y: number; r: number; color: Color }
+  /** Cuboid (volume box) at front-bottom-left (x,y), size w×h, depth d. */
+  | { t: "cuboid"; x: number; y: number; w: number; h: number; d: number; color: Color };
+
+// Oblique (cabinet) projection for the 3D helpers: depth axis goes up-right.
+const DEPTH_DX = 0.5, DEPTH_DY = 0.4;
+
+/** Points of a bumpy cloud outline (world coords), deterministic per seed. */
+function cloudPoints(cx: number, cy: number, r: number, seed: number): Array<[number, number]> {
+  const bumps = 11;
+  const pts: Array<[number, number]> = [];
+  // cheap deterministic pseudo-random from seed+index
+  const rnd = (i: number): number => {
+    const s = Math.sin((seed + 1) * 12.9898 + i * 78.233) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  for (let i = 0; i < bumps; i++) {
+    const a = (i / bumps) * Math.PI * 2;
+    const rr = r * (0.78 + 0.34 * rnd(i));
+    pts.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a)]);
+  }
+  return pts;
+}
 
 const TIKZ_COLOR: Record<Color, string> = {
   black: "", blue: "blue", red: "red", green: "green!60!black",
@@ -87,6 +121,46 @@ export function diagramToTikz(objs: Obj[]): string {
         }
         break;
       }
+      case "rect":
+        lines.push(`\\draw${style([])} (${n(o.x1)},${n(o.y1)}) rectangle (${n(o.x2)},${n(o.y2)});`);
+        break;
+      case "poly": {
+        if (o.pts.length >= 2) {
+          const path = o.pts.map(([x, y]) => `(${n(x)},${n(y)})`).join(" -- ");
+          lines.push(`\\draw${style([])} ${path} -- cycle;`);
+        }
+        break;
+      }
+      case "cloud": {
+        const pts = cloudPoints(o.x, o.y, o.r, o.seed)
+          .map(([x, y]) => `(${n(x)},${n(y)})`).join(" ");
+        lines.push(`\\draw${style([])} plot[smooth cycle, tension=0.7] coordinates {${pts}};`);
+        break;
+      }
+      case "axes3d": {
+        const L = o.len;
+        lines.push(`\\draw${style(["->"])} (${n(o.x)},${n(o.y)}) -- (${n(o.x + L)},${n(o.y)}) node[right] {$x$};`);
+        lines.push(`\\draw${style(["->"])} (${n(o.x)},${n(o.y)}) -- (${n(o.x)},${n(o.y + L)}) node[above] {$z$};`);
+        lines.push(`\\draw${style(["->"])} (${n(o.x)},${n(o.y)}) -- (${n(o.x + L * DEPTH_DX)},${n(o.y + L * DEPTH_DY)}) node[above right] {$y$};`);
+        break;
+      }
+      case "sphere":
+        lines.push(`\\draw${style([])} (${n(o.x)},${n(o.y)}) circle (${n(o.r)});`);
+        lines.push(`\\draw${style(["dashed"])} (${n(o.x)},${n(o.y)}) ellipse (${n(o.r)} and ${n(o.r * 0.32)});`);
+        break;
+      case "cuboid": {
+        const { x, y, w, h, d } = o;
+        const ox = d * DEPTH_DX, oy = d * DEPTH_DY;
+        // front face
+        lines.push(`\\draw${style([])} (${n(x)},${n(y)}) rectangle (${n(x + w)},${n(y + h)});`);
+        // back face
+        lines.push(`\\draw${style(["dashed"])} (${n(x + ox)},${n(y + oy)}) rectangle (${n(x + w + ox)},${n(y + h + oy)});`);
+        // connectors
+        for (const [cx, cy] of [[x, y], [x + w, y], [x + w, y + h], [x, y + h]] as const) {
+          lines.push(`\\draw${style([])} (${n(cx)},${n(cy)}) -- (${n(cx + ox)},${n(cy + oy)});`);
+        }
+        break;
+      }
     }
   }
   lines.push("\\end{tikzpicture}");
@@ -132,6 +206,18 @@ export function diagramToSvg(objs: Obj[]): string {
       case "circ": grow(o.x - o.r, o.y - o.r); grow(o.x + o.r, o.y + o.r); break;
       case "ell": grow(o.x - o.rx, o.y - o.ry); grow(o.x + o.rx, o.y + o.ry); break;
       case "ang": grow(o.x - o.r - 0.5, o.y - o.r - 0.5); grow(o.x + o.r + 0.5, o.y + o.r + 0.5); break;
+      case "rect": grow(o.x1, o.y1); grow(o.x2, o.y2); break;
+      case "poly": for (const [x, y] of o.pts) grow(x, y); break;
+      case "cloud": grow(o.x - o.r * 1.2, o.y - o.r * 1.2); grow(o.x + o.r * 1.2, o.y + o.r * 1.2); break;
+      case "sphere": grow(o.x - o.r, o.y - o.r); grow(o.x + o.r, o.y + o.r); break;
+      case "axes3d":
+        grow(o.x - 0.3, o.y - 0.3);
+        grow(o.x + o.len + 0.3, o.y + Math.max(o.len, o.len * DEPTH_DY) + 0.3);
+        break;
+      case "cuboid":
+        grow(o.x, o.y);
+        grow(o.x + o.w + o.d * DEPTH_DX, o.y + o.h + o.d * DEPTH_DY);
+        break;
     }
   }
   const PAD = 0.7, S = 40;   // padding (cm), px per cm
@@ -197,6 +283,62 @@ export function diagramToSvg(objs: Obj[]): string {
         }
         break;
       }
+      case "rect": {
+        const x = Math.min(X(o.x1), X(o.x2)), y = Math.min(Y(o.y1), Y(o.y2));
+        out.push(`<rect x="${x}" y="${y}" width="${Math.abs(X(o.x2) - X(o.x1))}" height="${Math.abs(Y(o.y2) - Y(o.y1))}" fill="none" stroke="${col}" stroke-width="2"${dash}/>`);
+        break;
+      }
+      case "poly": {
+        if (o.pts.length >= 2) {
+          const pts = o.pts.map(([x, y]) => `${X(x).toFixed(1)},${Y(y).toFixed(1)}`).join(" ");
+          out.push(`<polygon points="${pts}" fill="none" stroke="${col}" stroke-width="2"${dash}/>`);
+        }
+        break;
+      }
+      case "cloud": {
+        const p = cloudPoints(o.x, o.y, o.r, o.seed).map(([x, y]) => [X(x), Y(y)] as const);
+        // smooth closed path (Catmull-Rom-ish via quadratic midpoints)
+        let d = `M ${((p[p.length - 1]![0] + p[0]![0]) / 2).toFixed(1)} ${((p[p.length - 1]![1] + p[0]![1]) / 2).toFixed(1)}`;
+        for (let i = 0; i < p.length; i++) {
+          const cur = p[i]!, nxt = p[(i + 1) % p.length]!;
+          d += ` Q ${cur[0].toFixed(1)} ${cur[1].toFixed(1)} ${((cur[0] + nxt[0]) / 2).toFixed(1)} ${((cur[1] + nxt[1]) / 2).toFixed(1)}`;
+        }
+        out.push(`<path d="${d} Z" fill="none" stroke="${col}" stroke-width="2"${dash}/>`);
+        break;
+      }
+      case "sphere":
+        out.push(`<circle cx="${X(o.x)}" cy="${Y(o.y)}" r="${o.r * S}" fill="none" stroke="${col}" stroke-width="2"/>`);
+        out.push(`<ellipse cx="${X(o.x)}" cy="${Y(o.y)}" rx="${o.r * S}" ry="${o.r * 0.32 * S}" fill="none" stroke="${col}" stroke-width="1.5" stroke-dasharray="5 3"/>`);
+        break;
+      case "axes3d": {
+        const L = o.len;
+        const arrow = (bx: number, by: number, lbl: string): void => {
+          const ax = X(o.x), ay = Y(o.y);
+          out.push(`<line x1="${ax}" y1="${ay}" x2="${X(bx)}" y2="${Y(by)}" stroke="${col}" stroke-width="2"/>`);
+          const ang = Math.atan2(Y(by) - ay, X(bx) - ax);
+          for (const s of [-1, 1]) {
+            out.push(`<line x1="${X(bx)}" y1="${Y(by)}" x2="${(X(bx) - 9 * Math.cos(ang - s * 0.42)).toFixed(1)}" y2="${(Y(by) - 9 * Math.sin(ang - s * 0.42)).toFixed(1)}" stroke="${col}" stroke-width="2"/>`);
+          }
+          out.push(`<text x="${X(bx) + 6}" y="${Y(by)}" fill="${col}" font-size="13" font-style="italic">${lbl}</text>`);
+        };
+        arrow(o.x + L, o.y, "x");
+        arrow(o.x, o.y + L, "z");
+        arrow(o.x + L * DEPTH_DX, o.y + L * DEPTH_DY, "y");
+        break;
+      }
+      case "cuboid": {
+        const { x, y, w, h, d } = o;
+        const ox = d * DEPTH_DX, oy = d * DEPTH_DY;
+        const face = (fx: number, fy: number, extra: string): void => {
+          out.push(`<rect x="${X(fx)}" y="${Y(fy + h)}" width="${w * S}" height="${h * S}" fill="none" stroke="${col}" stroke-width="2"${extra}/>`);
+        };
+        face(x + ox, y + oy, ` stroke-dasharray="5 3"`);   // back
+        for (const [cx, cy] of [[x, y], [x + w, y], [x + w, y + h], [x, y + h]] as const) {
+          out.push(`<line x1="${X(cx)}" y1="${Y(cy)}" x2="${X(cx + ox)}" y2="${Y(cy + oy)}" stroke="${col}" stroke-width="1.5"/>`);
+        }
+        face(x, y, "");                                     // front
+        break;
+      }
     }
   }
   out.push("</svg>");
@@ -242,11 +384,12 @@ export function openDiagramStudio(view: EditorView): void {
   const editable = !!restored;           // plain tikz without a model → new diagram
   const objs: Obj[] = restored ?? [];
 
-  let tool: "select" | "pt" | "seg" | "arr" | "circ" | "ell" | "lbl" | "ang" = objs.length ? "select" : "arr";
+  let tool: "select"|"pt"|"seg"|"arr"|"circ"|"ell"|"lbl"|"ang"|"rect"|"poly"|"cloud"|"axes3d"|"sphere"|"cuboid" = objs.length ? "select" : "arr";
   let color: Color = "black";
   let dashed = false;
   let pending: { x: number; y: number } | null = null;   // first click of 2-click tools
   let pending2: { x: number; y: number } | null = null;  // second click (angle = 3 clicks)
+  let polyPending: Array<[number, number]> = [];         // polygon vertices so far
   let showGrid = true;
   let selected = -1;
   let dragOff: { dx: number; dy: number } | null = null;
@@ -279,7 +422,7 @@ export function openDiagramStudio(view: EditorView): void {
     b.title = hint;
     b.style.cssText = "border:1px solid rgba(127,127,127,0.4);background:rgba(127,127,127,0.12);" +
       "color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;";
-    b.addEventListener("click", () => { tool = id; pending = null; pending2 = null; syncBar(); });
+    b.addEventListener("click", () => { tool = id; pending = null; pending2 = null; polyPending = []; syncBar(); });
     toolBtns.set(id, b);
     bar.appendChild(b);
   };
@@ -295,6 +438,12 @@ export function openDiagramStudio(view: EditorView): void {
   mkTool("ell", "橢圓", "點兩下：中心 → 角落");
   mkTool("lbl", "文字", "點一下放置文字（支援 $math$）");
   mkTool("ang", "角度", "點三下：頂點 → 第一邊 → 第二邊（逆時針掃）");
+  mkTool("rect", "矩形", "點兩下：一角 → 對角");
+  mkTool("poly", "多邊形", "逐點點擊，雙擊或點回起點閉合");
+  mkTool("cloud", "雲氣團", "點兩下：中心 → 邊緣（雲/塵埃）");
+  mkTool("axes3d", "3D軸", "點一下放置等角 x/y/z 座標軸");
+  mkTool("sphere", "球體", "點兩下：中心 → 半徑（星球）");
+  mkTool("cuboid", "立方體", "點兩下：前面左下 → 右上（自動加深度）");
 
   const colorSel = document.createElement("select");
   colorSel.style.cssText = "background:rgba(127,127,127,0.12);color:inherit;border-radius:5px;padding:3px;";
@@ -401,6 +550,12 @@ export function openDiagramStudio(view: EditorView): void {
       ell: pending ? "再點一下 = 角落（定 rx, ry）" : "點一下 = 中心",
       lbl: "點一下放置文字（支援 $\\theta$ 這類 math）。",
       ang: pending2 ? "再點一下 = 第二邊方向" : pending ? "再點一下 = 第一邊方向" : "點一下 = 角的頂點",
+      rect: pending ? "再點一下 = 對角" : "點一下 = 一角",
+      poly: polyPending.length ? `已 ${polyPending.length} 點：繼續點，雙擊或點回起點閉合` : "點一下 = 第一個頂點",
+      cloud: pending ? "再點一下 = 雲的邊緣" : "點一下 = 雲的中心",
+      axes3d: "點一下放置 x/y/z 座標軸",
+      sphere: pending ? "再點一下 = 球面上一點" : "點一下 = 球心",
+      cuboid: pending ? "再點一下 = 前面對角" : "點一下 = 前面左下角",
     };
     hint.textContent = hints[tool] ?? "";
   }
@@ -432,11 +587,24 @@ export function openDiagramStudio(view: EditorView): void {
           if (Math.abs(v - 1) < 0.3) return i;
           break;
         }
-        case "ang": {
+        case "ang": case "sphere": {
           const d = Math.hypot(x - o.x, y - o.y);
           if (Math.abs(d - o.r) < 0.3 || d < 0.2) return i;
           break;
         }
+        case "rect": {
+          const lo = [Math.min(o.x1, o.x2), Math.min(o.y1, o.y2)];
+          const hi = [Math.max(o.x1, o.x2), Math.max(o.y1, o.y2)];
+          if (x > lo[0]! - 0.25 && x < hi[0]! + 0.25 && y > lo[1]! - 0.25 && y < hi[1]! + 0.25) return i;
+          break;
+        }
+        case "poly": {
+          for (const [px, py] of o.pts) if (close2(px, py, 0.35)) return i;
+          break;
+        }
+        case "cloud": { if (Math.hypot(x - o.x, y - o.y) < o.r * 1.2) return i; break; }
+        case "axes3d": if (close2(o.x, o.y, 0.5) || (x > o.x - 0.3 && x < o.x + o.len && y > o.y - 0.3 && y < o.y + o.len)) return i; break;
+        case "cuboid": if (x > o.x - 0.25 && x < o.x + o.w + o.d * DEPTH_DX + 0.25 && y > o.y - 0.25 && y < o.y + o.h + o.d * DEPTH_DY + 0.25) return i; break;
       }
     }
     return -1;
@@ -444,15 +612,22 @@ export function openDiagramStudio(view: EditorView): void {
 
   function objCenter(o: Obj): [number, number] {
     switch (o.t) {
-      case "pt": case "lbl": case "circ": case "ell": case "ang": return [o.x, o.y];
-      case "seg": case "arr": return [(o.x1 + o.x2) / 2, (o.y1 + o.y2) / 2];
+      case "pt": case "lbl": case "circ": case "ell": case "ang":
+      case "cloud": case "sphere": case "axes3d": case "cuboid": return [o.x, o.y];
+      case "seg": case "arr": case "rect": return [(o.x1 + o.x2) / 2, (o.y1 + o.y2) / 2];
+      case "poly": {
+        const s = o.pts.reduce((a, [px, py]) => [a[0] + px, a[1] + py], [0, 0]);
+        return [s[0] / o.pts.length, s[1] / o.pts.length];
+      }
     }
   }
 
   function moveObj(o: Obj, dx: number, dy: number): void {
     switch (o.t) {
-      case "pt": case "lbl": case "circ": case "ell": case "ang": o.x += dx; o.y += dy; break;
-      case "seg": case "arr": o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; break;
+      case "pt": case "lbl": case "circ": case "ell": case "ang":
+      case "cloud": case "sphere": case "axes3d": case "cuboid": o.x += dx; o.y += dy; break;
+      case "seg": case "arr": case "rect": o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; break;
+      case "poly": o.pts = o.pts.map(([px, py]) => [px + dx, py + dy]); break;
     }
   }
 
@@ -501,6 +676,23 @@ export function openDiagramStudio(view: EditorView): void {
       syncBar(); draw();
       return;
     }
+    // 1-click tool: 3D axis triad
+    if (tool === "axes3d") {
+      objs.push({ t: "axes3d", x, y, len: 2, color });
+      draw();
+      return;
+    }
+    // multi-click tool: polygon (close by clicking near the first vertex)
+    if (tool === "poly") {
+      if (polyPending.length >= 3 && Math.hypot(x - polyPending[0]![0], y - polyPending[0]![1]) < 0.3) {
+        objs.push({ t: "poly", pts: polyPending, dash: dashed, color });
+        polyPending = [];
+      } else {
+        polyPending.push([x, y]);
+      }
+      syncBar(); draw();
+      return;
+    }
     // 2-click tools
     if (!pending) { pending = { x, y }; syncBar(); draw(); return; }
     const a = pending; pending = null;
@@ -510,9 +702,25 @@ export function openDiagramStudio(view: EditorView): void {
       objs.push({ t: "circ", x: a.x, y: a.y, r: Math.max(SNAP, Math.hypot(x - a.x, y - a.y)), dash: dashed, color });
     } else if (tool === "ell") {
       objs.push({ t: "ell", x: a.x, y: a.y, rx: Math.max(SNAP, Math.abs(x - a.x)), ry: Math.max(SNAP, Math.abs(y - a.y)), dash: dashed, color });
+    } else if (tool === "rect") {
+      objs.push({ t: "rect", x1: a.x, y1: a.y, x2: x, y2: y, dash: dashed, color });
+    } else if (tool === "cloud") {
+      objs.push({ t: "cloud", x: a.x, y: a.y, r: Math.max(SNAP, Math.hypot(x - a.x, y - a.y)), seed: Math.floor((a.x * 7 + a.y * 13) * 100) % 997, dash: dashed, color });
+    } else if (tool === "sphere") {
+      objs.push({ t: "sphere", x: a.x, y: a.y, r: Math.max(SNAP, Math.hypot(x - a.x, y - a.y)), color });
+    } else if (tool === "cuboid") {
+      objs.push({ t: "cuboid", x: Math.min(a.x, x), y: Math.min(a.y, y), w: Math.max(SNAP, Math.abs(x - a.x)), h: Math.max(SNAP, Math.abs(y - a.y)), d: 1, color });
     }
     syncBar();
     draw();
+  });
+  // Double-click closes a polygon-in-progress (≥3 points).
+  svg.addEventListener("dblclick", () => {
+    if (tool === "poly" && polyPending.length >= 3) {
+      objs.push({ t: "poly", pts: polyPending, dash: dashed, color });
+      polyPending = [];
+      syncBar(); draw();
+    }
   });
   svg.addEventListener("pointermove", (e: PointerEvent) => {
     if (tool === "select" && dragOff && selected >= 0) {
@@ -524,6 +732,9 @@ export function openDiagramStudio(view: EditorView): void {
     }
   });
   svg.addEventListener("pointerup", () => { dragOff = null; });
+  // Capture can be lost without a pointerup (window blur, tool switch) — reset
+  // so the next move in select mode doesn't resume dragging the old object.
+  svg.addEventListener("lostpointercapture", () => { dragOff = null; });
   svg.addEventListener("dblclick", (e: MouseEvent) => {
     const [x, y] = toWorld(e);
     const i = hitTest(x, y);
@@ -664,8 +875,64 @@ export function openDiagramStudio(view: EditorView): void {
           }
           break;
         }
+        case "rect": {
+          const [ax, ay] = toPx(o.x1, o.y1), [bx, by] = toPx(o.x2, o.y2);
+          const r = mk("rect");
+          r.setAttribute("x", String(Math.min(ax, bx))); r.setAttribute("y", String(Math.min(ay, by)));
+          r.setAttribute("width", String(Math.abs(bx - ax))); r.setAttribute("height", String(Math.abs(by - ay)));
+          break;
+        }
+        case "poly": {
+          const pl = mk("polygon");
+          pl.setAttribute("points", o.pts.map(([x, y]) => { const [px, py] = toPx(x, y); return `${px.toFixed(1)},${py.toFixed(1)}`; }).join(" "));
+          break;
+        }
+        case "cloud": {
+          const p = cloudPoints(o.x, o.y, o.r, o.seed).map(([x, y]) => toPx(x, y));
+          let d = `M ${((p[p.length - 1]![0] + p[0]![0]) / 2).toFixed(1)} ${((p[p.length - 1]![1] + p[0]![1]) / 2).toFixed(1)}`;
+          for (let k = 0; k < p.length; k++) { const c = p[k]!, nx = p[(k + 1) % p.length]!; d += ` Q ${c[0].toFixed(1)} ${c[1].toFixed(1)} ${((c[0] + nx[0]) / 2).toFixed(1)} ${((c[1] + nx[1]) / 2).toFixed(1)}`; }
+          mk("path").setAttribute("d", d + " Z");
+          break;
+        }
+        case "sphere": {
+          const [px, py] = toPx(o.x, o.y);
+          const c = mk("circle"); c.setAttribute("cx", String(px)); c.setAttribute("cy", String(py)); c.setAttribute("r", String(o.r * PPC));
+          const el = mk("ellipse"); el.setAttribute("cx", String(px)); el.setAttribute("cy", String(py));
+          el.setAttribute("rx", String(o.r * PPC)); el.setAttribute("ry", String(o.r * 0.32 * PPC)); el.setAttribute("stroke-dasharray", "5 3");
+          break;
+        }
+        case "axes3d": {
+          const L = o.len;
+          const drawArr = (bx: number, by: number, lbl: string): void => {
+            const [ox, oy] = toPx(o.x, o.y), [tx, ty] = toPx(bx, by);
+            const l = mk("line"); l.setAttribute("x1", String(ox)); l.setAttribute("y1", String(oy)); l.setAttribute("x2", String(tx)); l.setAttribute("y2", String(ty));
+            const ang = Math.atan2(ty - oy, tx - ox);
+            for (const s of [-1, 1]) { const h = mk("line"); h.setAttribute("x1", String(tx)); h.setAttribute("y1", String(ty)); h.setAttribute("x2", (tx - 9 * Math.cos(ang - s * 0.42)).toFixed(1)); h.setAttribute("y2", (ty - 9 * Math.sin(ang - s * 0.42)).toFixed(1)); }
+            const t = document.createElementNS(NSVG, "text"); t.setAttribute("x", String(tx + 6)); t.setAttribute("y", String(ty)); t.setAttribute("fill", col); t.setAttribute("font-size", "13"); t.setAttribute("font-style", "italic"); t.textContent = lbl; svg.appendChild(t);
+          };
+          drawArr(o.x + L, o.y, "x"); drawArr(o.x, o.y + L, "z"); drawArr(o.x + L * DEPTH_DX, o.y + L * DEPTH_DY, "y");
+          break;
+        }
+        case "cuboid": {
+          const { x, y, w, h, d } = o;
+          const ox = d * DEPTH_DX, oy = d * DEPTH_DY;
+          const rectAt = (fx: number, fy: number, dashB: boolean): void => {
+            const [ax, ay] = toPx(fx, fy + h); const r = mk("rect");
+            r.setAttribute("x", String(ax)); r.setAttribute("y", String(ay)); r.setAttribute("width", String(w * PPC)); r.setAttribute("height", String(h * PPC));
+            if (dashB) r.setAttribute("stroke-dasharray", "5 3");
+          };
+          rectAt(x + ox, y + oy, true);
+          for (const [cx, cy] of [[x, y], [x + w, y], [x + w, y + h], [x, y + h]] as const) { const [ax, ay] = toPx(cx, cy), [bx, by] = toPx(cx + ox, cy + oy); const l = mk("line"); l.setAttribute("x1", String(ax)); l.setAttribute("y1", String(ay)); l.setAttribute("x2", String(bx)); l.setAttribute("y2", String(by)); }
+          rectAt(x, y, false);
+          break;
+        }
       }
     });
+    // polygon in progress
+    if (polyPending.length) {
+      for (const [x, y] of polyPending) { const [px, py] = toPx(x, y); const c = document.createElementNS(NSVG, "circle"); c.setAttribute("cx", String(px)); c.setAttribute("cy", String(py)); c.setAttribute("r", "3.5"); c.setAttribute("fill", "#4a9eff"); svg.appendChild(c); }
+      if (polyPending.length > 1) { const pl = document.createElementNS(NSVG, "polyline"); pl.setAttribute("points", polyPending.map(([x, y]) => { const [px, py] = toPx(x, y); return `${px.toFixed(1)},${py.toFixed(1)}`; }).join(" ")); pl.setAttribute("fill", "none"); pl.setAttribute("stroke", "#4a9eff"); pl.setAttribute("stroke-width", "1.5"); pl.setAttribute("stroke-dasharray", "4 3"); svg.appendChild(pl); }
+    }
     // pending click markers
     if (pending2) {
       const [px, py] = toPx(pending2.x, pending2.y);
