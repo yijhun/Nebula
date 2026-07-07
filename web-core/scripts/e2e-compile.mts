@@ -8,7 +8,7 @@
 import { convert } from "../src/latex/index.ts";
 import { convertProject } from "../src/latex/project.ts";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const TECTONIC = ["/opt/homebrew/bin/tectonic", "/usr/local/bin/tectonic"]
@@ -43,6 +43,11 @@ const CASES: Case[] = [
     md: "---\ntitle: Infall Kinematics\nauthor: Y. J.\ntemplate: mnras\n---\n# Introduction\n\nInfall [@ulrich1976] with $v_{\\rm LSR} = -17.7$ km/s.\n\n$$\\frac{dn}{dt} = -n_c k_{01}$$\n" },
   { name: "chart-fit-linear",
     md: "# Fit\n\n```chart\ntype: scatter\nfit: linear\nx, y\n0, 1.1\n1, 2.9\n2, 5.2\n3, 6.8\n```\n" },
+  // The shipped feature-tour note must compile end-to-end (guards every
+  // feature it demonstrates: math, chart+fit, tikz diagram, table, cites).
+  { name: "feature-tour",
+    md: readFileSync(new URL("../../demo-vault/功能導覽.md", import.meta.url), "utf8"),
+    opts: { defaultTemplate: "apj" } },
 ];
 
 let pass = 0, fail = 0;
