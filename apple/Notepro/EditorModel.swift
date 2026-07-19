@@ -1129,8 +1129,11 @@ final class EditorModel: ObservableObject, Identifiable {
 
     func restoreSnapshot(_ snap: HistoryStore.Snapshot) {
         guard let url = currentURL else { return }
-        getContent { [weak self] cur in
+        getContentStrict { [weak self] cur in
             guard let self else { return }
+            // Snapshot the pre-restore state so the restore is undoable — but a
+            // failed buffer read (nil) must not poison history with "".
+            guard let cur else { self.statusText = "還原暫停（編輯器未就緒），請再試一次"; return }
             HistoryStore.snapshot(root: self.vaultRoot, file: url, content: cur)
             let text = HistoryStore.content(snap)
             do {
@@ -1214,16 +1217,21 @@ final class EditorModel: ObservableObject, Identifiable {
     }
 
     /// A .tex document → Tectonic → PDF. Saves first, then compiles in place.
+    /// The target URL is captured up-front: `self.currentURL` may point at a
+    /// DIFFERENT document by the time the async chain (buffer → Zotero bib)
+    /// resolves, and writing this buffer there would corrupt it.
     private func exportLatexToPDF() {
         isExporting = true
         statusText = "編譯 LaTeX… Compiling"
-        getContent { [weak self] text in
+        let target = currentURL
+        getContentStrict { [weak self] text in
             guard let self else { return }
+            guard let text else { self.finishExport(.failure(PDFExporter.ExportError.compileFailed("編輯器未就緒，請再試一次"))); return }
             let prepared = Self.wrapLatexFragment(text)
             let keys = Self.citeKeys(inLatex: prepared)
             let proceed: (String) -> Void = { [weak self] bib in
                 guard let self else { return }
-                if let url = self.currentURL {
+                if let url = target {
                     try? text.write(to: url, atomically: true, encoding: .utf8) // save the user's raw file
                     let dir = url.deletingLastPathComponent()
                     if !bib.isEmpty {
@@ -1516,8 +1524,13 @@ final class EditorModel: ObservableObject, Identifiable {
         guard docMode == .latex, !aiFixing else { return }
         aiFixing = true
         statusText = "AI 修復 LaTeX 中…"
-        getContent { [weak self] text in
+        // The AI call can take minutes — capture which document we're fixing so
+        // the result is never applied to a different one the user switched to.
+        let target = currentURL
+        getContentStrict { [weak self] text in
             guard let self else { return }
+            // nil buffer → the AI would fabricate a document out of thin air.
+            guard let text, !text.isEmpty else { self.aiFixing = false; self.statusText = "編輯器未就緒，請再試一次"; return }
             let err = self.lastCompileError.isEmpty ? "（無詳細錯誤訊息，請檢查數學分隔符與括號是否成對）" : self.lastCompileError
             let prompt = """
             你是 LaTeX 專家。下面的 LaTeX 編譯失敗。只修正會導致『編譯失敗』的語法錯誤（例如未配對的 $ 或 $$、缺少的 { }、跑掉的數學模式、應改用 $$…$$ 的多行公式、未跳脫的特殊字元），完整保留所有文字、公式與原意，不要增刪內容、不要改寫。只輸出修正後的完整 LaTeX 原始碼，不要任何解釋、不要 markdown 圍欄。
@@ -1537,8 +1550,14 @@ final class EditorModel: ObservableObject, Identifiable {
                 case .success(let fixed):
                     let out = fixed.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard out.contains("\\"), out.count > 20 else { self.statusText = "AI 未產生有效修正"; return }
+                    // User switched documents while the AI ran → applying the
+                    // fix would overwrite the OTHER document. Drop it.
+                    guard self.currentURL == target else {
+                        self.statusText = "AI 修正完成，但你已切換文件 — 未套用（回到原文件再跑一次）"
+                        return
+                    }
                     self.setContent(out)
-                    if let url = self.currentURL { self.write(to: url) }   // saves + snapshots
+                    if let url = target { self.write(to: url) }   // saves + snapshots
                     self.statusText = "AI 已套用修正 — 重新編譯中（可從版本歷史還原）"
                     if self.latexPreviewVisible { self.scheduleLatexPreview() }
                 }
@@ -1626,9 +1645,13 @@ final class EditorModel: ObservableObject, Identifiable {
             if docMode == .markdown { convertToLaTeX(vault: vault) }
             return
         }
-        webView.evaluateJavaScript("window.notepro.getContent()") { [weak self] result, _ in
+        webView.evaluateJavaScript("window.notepro.getContent()") { [weak self] result, error in
             guard let self else { return }
-            let buffer = result as? String ?? ""
+            // A failed buffer read must not fall through as "" — that would
+            // truncate the file below. Bail; the user can retry.
+            guard error == nil, let buffer = result as? String else {
+                self.statusText = "編輯器未就緒，請再試一次"; return
+            }
             let fm = FileManager.default
             // Persist the current buffer only if it differs from disk (so we don't
             // bump its mtime when nothing changed — that's how we detect edits).
