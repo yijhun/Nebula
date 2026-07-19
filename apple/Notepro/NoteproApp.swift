@@ -45,6 +45,18 @@ struct NoteproApp: App {
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(vault.rootURL == nil || focusedEditor == nil)
 
+                Button(LZ("會議筆記 Meeting Note")) {
+                    if let u = vault.newMeetingNote() { focusedEditor?.open(u) }
+                }
+                .keyboardShortcut("m", modifiers: [.command, .option])
+                .disabled(vault.rootURL == nil || focusedEditor == nil)
+
+                Button(LZ("文獻筆記 Literature Note")) {
+                    if let u = vault.newLiteratureNote() { focusedEditor?.open(u) }
+                }
+                .keyboardShortcut("l", modifiers: [.command, .control])
+                .disabled(vault.rootURL == nil || focusedEditor == nil)
+
                 Button(LZ("新專案 New Project")) {
                     NotificationCenter.default.post(name: .noteproNewProject, object: nil)
                 }
@@ -111,6 +123,8 @@ struct NoteproApp: App {
                     .disabled(focusedEditor == nil)
                 Button(LZ("在 Zotero 開啟此引用")) { focusedEditor?.openCiteAtCursorInZotero() }
                     .keyboardShortcut("k", modifiers: [.command, .option, .shift])
+                    .disabled(focusedEditor == nil)
+                Button(LZ("開此引用的 PDF（Zotero）")) { focusedEditor?.openCitePDFAtCursor() }
                     .disabled(focusedEditor == nil)
                 Divider()
                 Menu(LZ("圖表 Chart")) {

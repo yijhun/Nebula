@@ -275,6 +275,18 @@ final class VaultModel: ObservableObject {
 
     func newNote() -> URL? { newFile(baseName: "Untitled", ext: "md", content: "# 新文件\n\n") }
 
+    /// Create a new meeting note from the template.
+    func newMeetingNote() -> URL? {
+        let t = NoteTemplates.meeting()
+        return newFile(baseName: t.title, ext: "md", content: t.body)
+    }
+
+    /// Create a new literature (reading) note from the template.
+    func newLiteratureNote() -> URL? {
+        let t = NoteTemplates.literature()
+        return newFile(baseName: t.title, ext: "md", content: t.body)
+    }
+
     // MARK: - File operations
 
     /// The directory a "new" item should go into, given the selected node.

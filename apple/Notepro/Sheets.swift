@@ -82,12 +82,31 @@ struct ShortcutsView: View {
 /// optional local-AI summary → saved as a note. Fully offline.
 struct TranscribeView: View {
     @EnvironmentObject var vault: VaultModel
-    @StateObject private var rec = MeetingRecorder()
+    @ObservedObject var rec: MeetingRecorder
     let onOpen: (URL) -> Void
+    let onDismiss: () -> Void            // hide the sheet but keep recording
     let onClose: () -> Void
+
+    // Review-form fields, filled after transcription.
+    @State private var mKind = "colloquium"
+    @State private var mSpeaker = ""
+    @State private var mEvent = ""
+    @State private var mTitle = ""
 
     private func writeNote(_ title: String, _ content: String) -> URL? {
         vault.newFile(baseName: title, ext: "md", content: content)
+    }
+
+    private func saveMeeting() {
+        // Fall back to the pre-recording topic if no title was typed in review.
+        let title = mTitle.isEmpty ? rec.topic : mTitle
+        let note = NoteTemplates.meeting(
+            kind: mKind, speaker: mSpeaker, event: mEvent, title: title,
+            summary: rec.pendingSummary, transcript: rec.pendingTranscript)
+        if let url = writeNote(note.title, note.body) { onOpen(url) }
+        rec.discardReview()
+        mKind = "colloquium"; mSpeaker = ""; mEvent = ""; mTitle = ""
+        onClose()
     }
     private func timeStr(_ t: TimeInterval) -> String {
         String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
@@ -112,11 +131,18 @@ struct TranscribeView: View {
             switch rec.phase {
             case .idle:
                 VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField(LZ("主題 / 術語（選填，會提高辨識與摘要準確度）"), text: $rec.topic)
+                            .textFieldStyle(.roundedBorder)
+                        Text(LZ("留空即用預設：英文 + 通用天文術語表。"))
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
                     Toggle("用本地 AI 整理摘要", isOn: $rec.summarize)
                     Toggle("逐字稿含時間戳", isOn: $rec.timestamps)
+                    Toggle(LZ("非英文演講（自動偵測語言）"), isOn: $rec.autoLanguage)
                     HStack(spacing: 16) {
                         Button {
-                            rec.startRecording()
+                            rec.startRecording(); onDismiss()
                         } label: {
                             Label("開始錄音", systemImage: "record.circle").font(.title3)
                         }
@@ -128,17 +154,24 @@ struct TranscribeView: View {
                         }
                         .disabled(!TranscriptionService.isAvailable)
                     }
+                    Text(LZ("錄音時可以繼續編輯筆記 —— 面板會縮成右下角的小條。"))
+                        .font(.caption2).foregroundStyle(.tertiary).multilineTextAlignment(.center)
                 }
             case .recording:
                 VStack(spacing: 12) {
                     Image(systemName: "waveform.circle.fill").font(.system(size: 44)).foregroundStyle(.red)
                     Text(timeStr(rec.elapsed)).font(.system(.title, design: .monospaced))
-                    Button {
-                        rec.stopAndProcess(write: writeNote, open: onOpen)
-                    } label: {
-                        Label("停止並轉錄", systemImage: "stop.circle")
+                    HStack(spacing: 12) {
+                        Button { onDismiss() } label: {
+                            Label(LZ("邊錄邊寫"), systemImage: "pencil.and.outline")
+                        }
+                        Button {
+                            rec.stopAndProcess(); onDismiss()
+                        } label: {
+                            Label("停止並轉錄", systemImage: "stop.circle")
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
             case .transcribing:
                 VStack(spacing: 8) {
@@ -159,12 +192,57 @@ struct TranscribeView: View {
                         .font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center)
                     Button("回到開始") { rec.phase = .idle }
                 }
+            case .review:
+                reviewForm
             }
             Spacer()
         }
         .padding(18)
-        .frame(width: 440, height: 320)
+        .frame(width: 440, height: rec.phase == .review ? 460 : 320)
         .onExitCommand(perform: onClose)
+    }
+
+    private var kindLabels: [(String, String)] {
+        [("colloquium", "演講 / colloquium"), ("group-meeting", "組會 / group meeting"),
+         ("seminar", "研討會 / seminar"), ("discussion", "討論 / discussion"),
+         ("interview", "訪談 / interview"), ("other", "其他 / other")]
+    }
+
+    @ViewBuilder private var reviewForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text(LZ("轉錄完成，補一下資訊")).font(.subheadline).bold()
+                Spacer()
+                if rec.pendingSummary?.isEmpty == false {
+                    Text(LZ("已含摘要")).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Form {
+                Picker(LZ("類型"), selection: $mKind) {
+                    ForEach(kindLabels, id: \.0) { Text($0.1).tag($0.0) }
+                }
+                TextField(LZ("主題 / 題目"), text: $mTitle)
+                TextField(LZ("講者"), text: $mSpeaker)
+                TextField(LZ("場合 / 系列"), text: $mEvent)
+            }
+            .textFieldStyle(.roundedBorder)
+            Text(LZ("逐字稿 \(rec.pendingTranscript.count) 字，會放進「## 逐字稿」。"))
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            HStack {
+                Button(LZ("捨棄")) { rec.discardReview(); onClose() }
+                Spacer()
+                Button {
+                    saveMeeting()
+                } label: {
+                    Label(LZ("建立會議筆記"), systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
+        .onAppear { if mTitle.isEmpty { mTitle = rec.topic } }
     }
 
     private func importAudio() {
@@ -174,7 +252,53 @@ struct TranscribeView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "轉錄"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        rec.processFile(url, write: writeNote, open: onOpen)
+        rec.processFile(url); onDismiss()
+    }
+}
+
+
+/// A compact floating pill (bottom-right) shown while a recording or its
+/// transcription is in progress, so the editor underneath stays fully usable.
+/// Hidden when idle/error; the review form takes over as a sheet.
+struct RecordingHUD: View {
+    @ObservedObject var rec: MeetingRecorder
+
+    var body: some View {
+        switch rec.phase {
+        case .recording:
+            pill {
+                Circle().fill(Color.red).frame(width: 9, height: 9)
+                Text(timeStr(rec.elapsed)).font(.system(.callout, design: .monospaced))
+                Button { rec.stopAndProcess() } label: {
+                    Label(LZ("停止"), systemImage: "stop.fill")
+                }.buttonStyle(.borderedProminent).controlSize(.small).tint(.red)
+            }
+        case .transcribing:
+            pill {
+                ProgressView().controlSize(.small)
+                Text("轉錄中 \(Int(rec.transcribeProgress * 100))%").font(.caption)
+            }
+        case .summarizing:
+            pill {
+                ProgressView().controlSize(.small)
+                Text(rec.summaryTotal > 1 ? "整理摘要 \(rec.summaryStep)/\(rec.summaryTotal)" : "整理摘要中…")
+                    .font(.caption)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private func pill<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        HStack(spacing: 8) { content() }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.25)))
+            .shadow(radius: 8, y: 2)
+    }
+
+    private func timeStr(_ t: TimeInterval) -> String {
+        String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
     }
 }
 
@@ -184,6 +308,7 @@ struct TranscribeView: View {
 struct LiteratureSearchView: View {
     @EnvironmentObject var vault: VaultModel
     @EnvironmentObject var editor: EditorModel
+    @EnvironmentObject var index: IndexService
     let onOpen: (URL) -> Void
     let onClose: () -> Void
 
@@ -200,7 +325,8 @@ struct LiteratureSearchView: View {
                 Picker("", selection: $source) {
                     Text("arXiv").tag("arxiv")
                     Text("NASA ADS").tag("ads")
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                    Text(LZ("Zotero 書庫")).tag("zotero")
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 300)
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("搜尋論文（標題 / 作者 / 關鍵字）…", text: $query)
@@ -271,9 +397,20 @@ struct LiteratureSearchView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !busy else { return }
         busy = true; status = ""
-        if source == "arxiv" {
+        switch source {
+        case "arxiv":
             LiteratureSearch.arxiv(q) { r in results = r; busy = false; if r.isEmpty { status = "沒有結果" } }
-        } else {
+        case "zotero":
+            ZoteroService.search(q) { items in
+                busy = false
+                results = items.map { it in
+                    Paper(title: it.title, authors: it.authors.isEmpty ? [] : [it.authors],
+                          year: it.year, abstract: "", identifier: it.citekey,
+                          doi: "", url: "", source: "Zotero")
+                }
+                if results.isEmpty { status = ZoteroService.enabled ? "Zotero 沒有結果（確認 Zotero 已開啟）" : "Zotero 整合已關閉" }
+            }
+        default:
             LiteratureSearch.ads(q) { result in
                 busy = false
                 switch result {
@@ -286,6 +423,7 @@ struct LiteratureSearchView: View {
 
     private func importPaper(_ p: Paper) {
         guard vault.rootURL != nil else { status = "請先開啟資料夾"; return }
+        if p.source == "Zotero" { importZotero(p); return }
         if p.source == "ADS" {
             LiteratureSearch.adsBibtex(p.identifier) { bib in
                 finish(p, bibtex: bib ?? LiteratureSearch.arxivBibtex(p, key: LiteratureSearch.citekey(for: p)))
@@ -293,6 +431,52 @@ struct LiteratureSearchView: View {
         } else {
             finish(p, bibtex: LiteratureSearch.arxivBibtex(p, key: LiteratureSearch.citekey(for: p)))
         }
+    }
+
+    /// Import from the Zotero library: pull the full record + BibTeX, build a
+    /// fully-filled literature note (citekey is authoritative), and cite it.
+    private func importZotero(_ p: Paper) {
+        let key = p.identifier
+        // Already have a note for this citekey → just open it.
+        if let existing = index.entries.first(where: {
+            $0.properties["cite"] == key &&
+            (LiteratureLibraryView.isLiteratureType($0.properties["type"]))
+        }) {
+            status = "已存在，開啟現有筆記"; onOpen(existing.url); return
+        }
+        busy = true; status = "從 Zotero 取得完整書目…"
+        ZoteroService.fullMeta([key]) { map in
+            let m = map[key] ?? ZoteroMeta(citekey: key, title: p.title,
+                                           authors: p.authors.first ?? "", year: p.year)
+            ZoteroService.exportBib([key]) { bib in
+                busy = false
+                finishZotero(m, bibtex: bib)
+            }
+        }
+    }
+
+    private func finishZotero(_ m: ZoteroMeta, bibtex: String) {
+        guard let root = vault.rootURL else { return }
+        let key = m.citekey
+        // 1. Append to references.bib (dedup by key) so offline LaTeX compile works.
+        if !bibtex.isEmpty {
+            let bibURL = root.appendingPathComponent("references.bib")
+            let existing = (try? String(contentsOf: bibURL, encoding: .utf8)) ?? ""
+            if !existing.contains("{\(key),") && !existing.contains("{\(key) ,") {
+                let merged = existing.isEmpty ? bibtex : existing + "\n" + bibtex
+                try? merged.write(to: bibURL, atomically: true, encoding: .utf8)
+            }
+        }
+        // 2. Fully-filled literature note.
+        let note = NoteTemplates.literature(
+            title: m.title, authors: m.authors, year: m.year, cite: key,
+            doi: m.doi, url: m.url, journal: m.journal, volume: m.volume,
+            pages: m.pages, source: "Zotero", abstract: m.abstract)
+        let url = vault.newFile(baseName: note.title, ext: "md", content: note.body)
+        // 3. Cite it in the active editor.
+        editor.insertCitation(key)
+        status = "已從 Zotero 匯入 [@\(key)]"
+        if let url { onOpen(url) }
     }
 
     private func finish(_ p: Paper, bibtex: String) {

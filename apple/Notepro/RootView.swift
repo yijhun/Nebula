@@ -10,6 +10,9 @@ struct RootView: View {
     @EnvironmentObject var semIndex: SemanticIndex
     @EnvironmentObject var projects: ProjectsModel
     @StateObject private var tabs = TabsModel()
+    /// Owned here (not inside the sheet) so recording keeps running — and the
+    /// editor stays interactive — after the setup sheet is dismissed.
+    @StateObject private var recorder = MeetingRecorder()
     @State private var selection = Set<URL>()
     @State private var modal: Modal?
 
@@ -18,7 +21,7 @@ struct RootView: View {
     enum Modal: Identifiable {
         case palette(String, String)   // mode ("files"/"content"), seed query
         case semantic, graph, history, shortcuts, transcribe, literature, cowork
-        case library, searchReplace
+        case library, searchReplace, todos
         case database(DBTarget)
         var id: String {
             switch self {
@@ -32,6 +35,7 @@ struct RootView: View {
             case .cowork: return "cowork"
             case .library: return "library"
             case .searchReplace: return "searchReplace"
+            case .todos: return "todos"
             case .database(let t): return "db-\(t.id)"
             }
         }
@@ -51,6 +55,14 @@ struct RootView: View {
         observers(lifecycle(decorated(splitView)))
             .navigationTitle(tabs.active.displayName)
             .sheet(item: $modal) { m in sheetView(m) }
+            .overlay(alignment: .bottomTrailing) {
+                RecordingHUD(rec: recorder)
+                    .padding(.trailing, 18).padding(.bottom, 18)
+            }
+            // When transcription finishes, surface the review form as a sheet.
+            .onChange(of: recorder.phase) { phase in
+                if phase == .review { modal = .transcribe }
+            }
     }
 
     private var splitView: some View {
@@ -152,7 +164,9 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenHistory)) { _ in modal = .history }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenShortcuts)) { _ in modal = .shortcuts }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTranscribe)) { _ in modal = .transcribe }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLiterature)) { _ in modal = .literature }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLiterature)) { _ in
+            index.buildIfNeeded(vault); modal = .literature
+        }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenCowork)) { _ in modal = .cowork }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLibrary)) { _ in
             index.buildIfNeeded(vault); modal = .library
@@ -186,6 +200,9 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
             modal = .palette(note.userInfo?["mode"] as? String ?? "files",
                              note.userInfo?["query"] as? String ?? "")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTodos)) { _ in
+            index.buildIfNeeded(vault); modal = .todos
         }
     }
 
@@ -225,7 +242,9 @@ struct RootView: View {
             ShortcutsView(onClose: { modal = nil })
         case .transcribe:
             TranscribeView(
+                rec: recorder,
                 onOpen: { url in vault.refresh(); selection = [url]; tabs.open(url); modal = nil },
+                onDismiss: { modal = nil },      // hide the sheet, keep recording
                 onClose: { modal = nil }
             )
             .environmentObject(vault)
@@ -234,15 +253,20 @@ struct RootView: View {
                 onOpen: { url in vault.refresh(); selection = [url]; tabs.open(url); modal = nil },
                 onClose: { modal = nil }
             )
-            .environmentObject(vault).environmentObject(tabs.active)
+            .environmentObject(vault).environmentObject(tabs.active).environmentObject(index)
         case .cowork:
             CoworkView(onClose: { modal = nil }).environmentObject(tabs.active)
         case .library:
             LiteratureLibraryView(
                 onOpen: { url in selection = [url]; tabs.open(url); modal = nil },
+                onChanged: { url in
+                    for t in tabs.tabs where t.currentURL == url { t.open(url) }
+                    if tabs.secondary.currentURL == url { tabs.secondary.open(url) }
+                    index.forceRebuild(vault)
+                },
                 onClose: { modal = nil }
             )
-            .environmentObject(index)
+            .environmentObject(vault).environmentObject(index)
         case .searchReplace:
             SearchReplaceView(
                 onOpen: { url in selection = [url]; tabs.open(url); modal = nil },
@@ -250,6 +274,21 @@ struct RootView: View {
                     // Reload any open tab whose file we rewrote on disk.
                     for t in tabs.tabs where t.currentURL.map(urls.contains) == true { if let u = t.currentURL { t.open(u) } }
                     if tabs.secondary.currentURL.map(urls.contains) == true, let u = tabs.secondary.currentURL { tabs.secondary.open(u) }
+                    index.forceRebuild(vault)
+                },
+                onClose: { modal = nil }
+            )
+            .environmentObject(vault).environmentObject(index)
+        case .todos:
+            TodoLibraryView(
+                onOpen: { url, line in selection = [url]; tabs.open(url)
+                          if let line { NotificationCenter.default.post(
+                              name: .noteproMirrorJump, object: nil,
+                              userInfo: ["url": url, "line": line]) }
+                          modal = nil },
+                onChanged: { url in
+                    for t in tabs.tabs where t.currentURL == url { t.open(url) }
+                    if tabs.secondary.currentURL == url { tabs.secondary.open(url) }
                     index.forceRebuild(vault)
                 },
                 onClose: { modal = nil }

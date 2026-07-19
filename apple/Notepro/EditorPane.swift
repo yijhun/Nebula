@@ -134,7 +134,10 @@ struct EditorPane: View {
                             Label(LZ("找文獻 arXiv/ADS"), systemImage: "magnifyingglass.circle")
                         }
                         Button { NotificationCenter.default.post(name: .noteproOpenLibrary, object: nil) } label: {
-                            Label(LZ("文獻庫"), systemImage: "books.vertical")
+                            Label(LZ("筆記庫（論文 / 會議）"), systemImage: "books.vertical")
+                        }
+                        Button { NotificationCenter.default.post(name: .noteproOpenTodos, object: nil) } label: {
+                            Label(LZ("我的待辦"), systemImage: "checklist")
                         }
                         Button { openPaperPDF() } label: { Label(LZ("讀 PDF"), systemImage: "doc.viewfinder") }
                         Button { NotificationCenter.default.post(name: .noteproOpenTranscribe, object: nil) } label: {

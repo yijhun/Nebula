@@ -27,6 +27,7 @@ extension Notification.Name {
     static let noteproOpenPreviewWindow = Notification.Name("NoteproOpenPreviewWindow") // userInfo["url"]: URL
     static let noteproOpenLibrary = Notification.Name("NoteproOpenLibrary")
     static let noteproOpenSearchReplace = Notification.Name("NoteproOpenSearchReplace")
+    static let noteproOpenTodos = Notification.Name("NoteproOpenTodos")
 }
 
 /// Default editable AI presets ("label | instruction" per line).

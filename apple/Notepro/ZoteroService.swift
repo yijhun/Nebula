@@ -9,6 +9,21 @@ struct ZoteroItem: Identifiable, Hashable {
     var id: String { citekey }
 }
 
+/// The full bibliographic record for one item, parsed from Better CSL JSON —
+/// everything the literature note wants to auto-fill.
+struct ZoteroMeta {
+    var citekey = ""
+    var title = ""
+    var authors = ""      // "Family, Family et al."
+    var year = ""
+    var journal = ""      // container-title
+    var volume = ""
+    var pages = ""
+    var doi = ""
+    var url = ""
+    var abstract = ""
+}
+
 /// Talks to the local Better BibTeX JSON-RPC endpoint (no cloud / API key).
 /// Requires Zotero running with the Better BibTeX plugin.
 enum ZoteroService {
@@ -112,6 +127,72 @@ enum ZoteroService {
             }
             DispatchQueue.main.async { completion(map) }
         }
+    }
+
+    /// Full bibliographic records for the given citekeys (Better CSL JSON →
+    /// every field the literature note fills). Local BBT first, Web API fallback.
+    static func fullMeta(_ citekeys: [String], completion: @escaping ([String: ZoteroMeta]) -> Void) {
+        let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
+        guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion([:]) }; return }
+        rpc("item.export", [keys, "Better CSL JSON"]) { result in
+            // Rich parse needs Better BibTeX's CSL export; if Zotero is closed we
+            // just return nothing (the caller keeps whatever it already had).
+            let map: [String: ZoteroMeta]
+            if case .success(let r) = result, let s = r as? String { map = parseCSL(s) }
+            else { map = [:] }
+            DispatchQueue.main.async { completion(map) }
+        }
+    }
+
+    /// Parse a Better CSL JSON array into citekey → ZoteroMeta.
+    private static func parseCSL(_ s: String) -> [String: ZoteroMeta] {
+        guard let data = s.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [:] }
+        var map: [String: ZoteroMeta] = [:]
+        for it in arr {
+            guard let id = it["id"] as? String else { continue }
+            var m = ZoteroMeta(citekey: id)
+            m.title = (it["title"] as? String) ?? ""
+            m.authors = authorString(it["author"])
+            m.year = yearString(it["issued"])
+            m.journal = (it["container-title"] as? String) ?? ""
+            m.volume = stringField(it["volume"])
+            m.pages = stringField(it["page"])
+            m.doi = (it["DOI"] as? String) ?? ""
+            m.url = (it["URL"] as? String) ?? ""
+            m.abstract = (it["abstract"] as? String) ?? ""
+            map[id] = m
+        }
+        return map
+    }
+
+    /// Find the citekey of the library item matching an anchor. Prefers DOI,
+    /// then arXiv id, then a title query. Returns nil if nothing matches.
+    static func resolveCitekey(doi: String = "", arxiv: String = "", title: String = "",
+                               completion: @escaping (String?) -> Void) {
+        let doi = doi.trimmingCharacters(in: .whitespaces)
+        let arxiv = arxiv.trimmingCharacters(in: .whitespaces)
+        let title = title.trimmingCharacters(in: .whitespaces)
+        let query = !doi.isEmpty ? doi : (!arxiv.isEmpty ? arxiv : title)
+        guard enabled, !query.isEmpty else { DispatchQueue.main.async { completion(nil) }; return }
+        search(query) { items in
+            // DOI/arXiv are unique enough to take the first hit; a title query
+            // only counts if it's an exact (case-insensitive) title match.
+            if !doi.isEmpty || !arxiv.isEmpty {
+                completion(items.first?.citekey)
+            } else {
+                let want = title.lowercased()
+                completion(items.first(where: { $0.title.lowercased() == want })?.citekey
+                           ?? (items.count == 1 ? items.first?.citekey : nil))
+            }
+        }
+    }
+
+    private static func stringField(_ any: Any?) -> String {
+        if let s = any as? String { return s }
+        if let i = any as? Int { return String(i) }
+        return ""
     }
 
     /// "Family et al. (year)" / "Family (year)" from a CSL item.
