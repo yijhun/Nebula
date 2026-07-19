@@ -252,6 +252,27 @@
         border: 1px dashed currentColor; border-radius: 6px;
         text-align: center;
       }
+      /* Inline `= expr` result + ```calc block. */
+      .np-calc-inline {
+        font-variant-numeric: tabular-nums;
+        background: rgba(34,197,94,0.12);
+        border-radius: 4px; padding: 0 5px;
+        font-size: 0.94em; white-space: nowrap;
+      }
+      body.np-light #preview .np-calc-inline { background: #e7f7ec; }
+      .np-calc-wrap { margin: 12px 0; }
+      .np-calc-block {
+        border: 1px solid currentColor; border-color: rgba(128,128,128,0.28);
+        border-radius: 6px; padding: 8px 10px;
+        font-variant-numeric: tabular-nums;
+        display: flex; flex-direction: column; gap: 2px;
+      }
+      .np-calc-row { display: flex; align-items: baseline; gap: 8px; }
+      .np-calc-row .np-calc-expr { flex: 1; opacity: 0.9; }
+      .np-calc-row .np-calc-eq { opacity: 0.5; }
+      .np-calc-row .np-calc-val { font-weight: 600; }
+      .np-calc-row.np-calc-err .np-calc-val { color: #dc2626; font-weight: 400; opacity: 0.85; }
+      .np-calc-comment { opacity: 0.55; font-style: italic; margin: 2px 0; }
       #preview .np-cite {
         color: #2563eb;
         background: #eef2ff;

@@ -22,6 +22,7 @@ import { tex2svg } from "./mathjax.js";
 import { renderChart } from "./chart.js";
 import { parseDiagramModel, diagramToSvg } from "./diagramStudio.js";
 import { parseDiagram3dModel, diagram3dToSvg } from "./diagram3d.js";
+import { renderCalcBlock, evalInline } from "./calc.js";
 
 /** Matches a `[@key]`, `[@a; @b]`, `[@key, p. 5]` citation group. */
 const CITE_RE = /\[([^\]\[\n]*@[^\]\n]*)\]/g;
@@ -148,6 +149,54 @@ function rehypeCharts() {
         children: frag.children,
       };
       return SKIP;
+    });
+  };
+}
+
+/** Render ```calc code blocks into an evaluated result table (see calc.ts). */
+function rehypeCalcBlocks() {
+  return (tree: unknown) => {
+    visit(tree as Root, "element", (node: Record<string, unknown>, index, parent) => {
+      const par = parent as unknown as { children: unknown[] } | null;
+      if (node.tagName !== "pre" || !par || index == null) return;
+      const children = node.children as Array<Record<string, unknown>> | undefined;
+      const code = children?.find((c) => c.tagName === "code");
+      const cls = (code?.properties as { className?: unknown })?.className;
+      const list = Array.isArray(cls) ? (cls as string[]) : [];
+      if (!list.includes("language-calc")) return;
+      const src = ((code?.children as Array<{ value?: string }>) ?? [])
+        .map((c) => c.value ?? "").join("");
+      const frag = fromHtml(renderCalcBlock(src), { fragment: true });
+      const props = node.properties as Record<string, unknown> | undefined;
+      par.children[index] = {
+        type: "element",
+        tagName: "div",
+        properties: { className: ["np-calc-wrap"], dataLine: props?.["dataLine"] },
+        children: frag.children,
+      };
+      return SKIP;
+    });
+  };
+}
+
+/** Inline `` `= expr` `` → "expr = result". Only transforms when the expression
+ * actually evaluates to a finite number; otherwise the inline code is left as-is
+ * (so ``= operator`` / spreadsheet-style code isn't clobbered). */
+function rehypeInlineCalc() {
+  return (tree: unknown) => {
+    visit(tree as Root, "element", (node: Record<string, unknown>, _index, parent) => {
+      if (node.tagName !== "code") return;
+      const par = parent as unknown as { tagName?: string } | null;
+      if (!par || par.tagName === "pre") return;   // skip fenced/block code
+      const kids = node.children as Array<{ type?: string; value?: string }> | undefined;
+      if (!kids || kids.length !== 1 || kids[0]?.type !== "text") return;
+      const m = /^=\s*(.+)$/.exec((kids[0].value ?? "").trim());
+      if (!m) return;
+      const out = evalInline(m[1]!);
+      if (out == null) return;                      // not a computable expression
+      node.tagName = "span";
+      node.properties = { className: ["np-calc-inline"] };
+      node.children = [{ type: "text", value: out }];
     });
   };
 }
@@ -308,6 +357,8 @@ const processor: Processor = unified()
   .use(remarkRehype)
   .use(rehypeSourceLines)
   .use(rehypeCharts)
+  .use(rehypeCalcBlocks)
+  .use(rehypeInlineCalc)
   .use(rehypeImgSrc)
   .use(rehypeCachedMathjax)
   .use(rehypeStringify) as unknown as Processor;
