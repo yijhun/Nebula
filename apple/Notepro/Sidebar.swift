@@ -456,7 +456,11 @@ struct VaultSidebar: View {
     private func commitRename() {
         guard let node = renameTarget else { return }
         if let newURL = vault.rename(node, to: renameText) {
-            if editor.currentURL == node.url { editor.open(newURL) }
+            // Every open editor (tabs, split, this pane) retargets in place —
+            // buffers survive, pending autosaves land on the new path. Covers
+            // folder renames too (children remap by prefix).
+            NotificationCenter.default.post(name: .noteproFileRenamed, object: nil,
+                                            userInfo: ["old": node.url, "new": newURL])
             if selection.contains(node.url) { selection.remove(node.url); selection.insert(newURL) }
         }
         renameTarget = nil

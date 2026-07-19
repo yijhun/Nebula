@@ -153,7 +153,7 @@ struct RootView: View {
             else { tabs.active.statusText = "找不到筆記：\(target)" }
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenDatabase)) { note in
-            index.buildIfNeeded(vault)
+            flushDirtyEditors(); index.buildIfNeeded(vault)
             let folder = note.userInfo?["folder"] as? URL
             let title = (note.userInfo?["title"] as? String) ?? (folder?.lastPathComponent ?? "資料庫")
             modal = .database(DBTarget(folder: folder, title: title))
@@ -169,10 +169,10 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenCowork)) { _ in modal = .cowork }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLibrary)) { _ in
-            index.buildIfNeeded(vault); modal = .library
+            flushDirtyEditors(); index.buildIfNeeded(vault); modal = .library
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSearchReplace)) { _ in
-            index.buildIfNeeded(vault); modal = .searchReplace
+            flushDirtyEditors(); index.buildIfNeeded(vault); modal = .searchReplace
         }
     }
 
@@ -202,8 +202,23 @@ struct RootView: View {
                              note.userInfo?["query"] as? String ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTodos)) { _ in
-            index.buildIfNeeded(vault); modal = .todos
+            flushDirtyEditors(); index.buildIfNeeded(vault); modal = .todos
         }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproFileRenamed)) { note in
+            guard let old = note.userInfo?["old"] as? URL,
+                  let new = note.userInfo?["new"] as? URL else { return }
+            for t in tabs.tabs { t.fileRenamed(from: old, to: new) }
+            tabs.secondary.fileRenamed(from: old, to: new)
+        }
+    }
+
+    /// Persist unsaved edits in every pane before opening a modal whose actions
+    /// read/rewrite vault files from disk (to-do tick, backfill, replace) —
+    /// otherwise they'd operate on a file missing the last ~2s of typing. The
+    /// sheet blocks further typing, so flushing here closes the race window.
+    private func flushDirtyEditors() {
+        for t in tabs.tabs { t.saveIfDirty() }
+        tabs.secondary.saveIfDirty()
     }
 
     @ViewBuilder

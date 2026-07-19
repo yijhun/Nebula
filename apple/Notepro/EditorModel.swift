@@ -644,9 +644,43 @@ final class EditorModel: ObservableObject, Identifiable {
             currentURL = dest
             displayName = dest.lastPathComponent
             statusText = "已重新命名為 \(dest.lastPathComponent)"
+            // Other tabs / the split pane may hold this file too — retarget them
+            // so their autosave doesn't resurrect the old path.
+            NotificationCenter.default.post(name: .noteproFileRenamed, object: nil,
+                                            userInfo: ["old": url, "new": dest])
         } catch {
             statusText = "重新命名失敗：\(error.localizedDescription)"
         }
+    }
+
+    /// The file (or an ancestor folder) was renamed/moved on disk — retarget the
+    /// open document WITHOUT reloading, so unsaved buffer edits survive and any
+    /// pending auto-save lands on the new path instead of resurrecting the old.
+    func fileRenamed(from old: URL, to new: URL) {
+        guard let cur = currentURL else { return }
+        let oldPath = old.standardizedFileURL.path
+        let curPath = cur.standardizedFileURL.path
+        let retarget: URL
+        if curPath == oldPath {
+            retarget = new
+        } else if curPath.hasPrefix(oldPath + "/") {   // file inside a renamed folder
+            retarget = URL(fileURLWithPath: new.standardizedFileURL.path + curPath.dropFirst(oldPath.count))
+        } else {
+            return
+        }
+        currentURL = retarget
+        displayName = retarget.lastPathComponent
+        statusText = displayName
+        pushBasePaths()
+        if isDirty { scheduleAutoSave() }   // pending save was URL-guarded off; reschedule onto the new path
+    }
+
+    /// Save immediately if there are unsaved edits. Called before modal actions
+    /// (to-do tick, Zotero backfill, search & replace) that read or rewrite
+    /// vault files straight from disk — otherwise the last ~2s of typing would
+    /// be missing from what they read (and lost when the tab reloads).
+    func saveIfDirty() {
+        if isDirty, let url = currentURL { write(to: url) }
     }
 
     // MARK: - Properties (frontmatter form)
