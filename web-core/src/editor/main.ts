@@ -54,6 +54,9 @@ let appEl: HTMLElement | null = null;
 let renderTimer: number | undefined;
 let mode: Mode = "markdown";
 let viewMode: ViewMode = "split";
+/** True while setContent() replaces the doc programmatically — the change
+ * listener must not report it as a user edit ("dirty"). */
+let suppressDirty = false;
 
 /** Live linter: flag unbalanced $/$$/{}/\begin by underlining the offending
  * line (gutter marker + hover message), updated as you type. */
@@ -260,7 +263,15 @@ function renderTexSource(): void {
 
 const api = {
   setContent(text: string): void {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    // Programmatic replace (open/reload from the host) must NOT read as a user
+    // edit: a spurious "dirty" makes the host think there are unsaved changes
+    // and schedule an auto-save right after every document switch.
+    suppressDirty = true;
+    try {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    } finally {
+      suppressDirty = false;
+    }
     scheduleRender();
     pushOutline();
     postToHost({ type: "loaded" });
@@ -796,7 +807,7 @@ function boot(): void {
 
   const onChange = EditorView.updateListener.of((u) => {
     if (u.docChanged) {
-      postToHost({ type: "dirty" });
+      if (!suppressDirty) postToHost({ type: "dirty" });
       scheduleRender();
       pushOutline();
     } else if (u.selectionSet) {

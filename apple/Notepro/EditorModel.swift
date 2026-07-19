@@ -580,12 +580,31 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
+    /// Open the PDF attachment of the citation under the cursor in Zotero.
+    func openCitePDFAtCursor() {
+        webView?.evaluateJavaScript("window.notepro.citeAtCursor()") { result, _ in
+            guard let key = result as? String, !key.isEmpty else {
+                self.statusText = "游標不在引用上（把游標移到 [@key] 內）"; return
+            }
+            Self.openPDFInZotero(citekey: key)
+        }
+    }
+
     /// Open a citekey in Zotero. Better BibTeX resolves `@citekey`; if Zotero
     /// isn't running, macOS launches it first. Falls back to selecting by the
     /// raw key (works for Zotero's own keys too).
     static func openInZotero(citekey: String) {
         let escaped = citekey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? citekey
         guard let url = URL(string: "zotero://select/items/@\(escaped)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Open the item's PDF attachment in Zotero's built-in reader (annotations
+    /// stay in Zotero, so they round-trip). Better BibTeX resolves `@citekey`
+    /// and Zotero picks the item's first PDF attachment.
+    static func openPDFInZotero(citekey: String) {
+        let escaped = citekey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? citekey
+        guard let url = URL(string: "zotero://open-pdf/library/items/@\(escaped)") else { return }
         NSWorkspace.shared.open(url)
     }
     /// Open the in-document find bar (⌘F) inside the editor.
@@ -799,6 +818,16 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
+    /// Like `getContent`, but distinguishes a genuinely empty buffer ("") from
+    /// a failed JS call (nil). Every DISK-WRITE path must use this: the "" that
+    /// a failed/booting webview returns would silently truncate the file.
+    private func getContentStrict(_ completion: @escaping (String?) -> Void) {
+        guard let webView, webReady else { completion(nil); return }
+        webView.evaluateJavaScript("window.notepro.getContent()") { result, error in
+            completion(error == nil ? result as? String : nil)
+        }
+    }
+
     /// Cowork-with-Claude payload helpers. The selection / heading-bounded
     /// section / whole note — picked by the user in the Cowork sheet, then
     /// composed with a prompt and shipped via clipboard + open claude.ai.
@@ -900,6 +929,10 @@ final class EditorModel: ObservableObject, Identifiable {
 
     /// Open a file from the vault (or anywhere) into this window's editor.
     func open(_ url: URL) {
+        // Kill any pending debounced auto-save NOW: it captured the previous
+        // URL, and once the buffer below is replaced it would write THIS file's
+        // content into that one (cross-file corruption).
+        autoSaveWork?.cancel(); autoSaveWork = nil
         // A tab created on-the-fly (e.g. drag-drop onto the tab bar) may not
         // have its WebView yet — setContent would no-op and the editor would
         // boot showing the default welcome doc. Defer until `ready` fires.
@@ -909,6 +942,30 @@ final class EditorModel: ObservableObject, Identifiable {
             displayName = url.lastPathComponent
             docMode = Self.mode(for: url)
             return
+        }
+        // A newer open supersedes any open that was deferred behind a flush.
+        deferredOpenURL = nil
+        // Switch-away-and-back race: if THIS file's unsaved edits are still
+        // being flushed, the bytes on disk are stale — reading them now would
+        // show the pre-edit version (and an autosave would persist it). Wait
+        // for the flush to land, then reopen.
+        if flushingURL == url { deferredOpenURL = url; return }
+        // Unsaved edits on the outgoing document → flush them to ITS url before
+        // the buffer changes. evaluateJavaScript calls run in order, so this
+        // read grabs the old buffer before setContent below replaces it.
+        if autoSaveEnabled, isDirty, let old = currentURL, old != url {
+            isDirty = false          // consume: no double-flush on rapid switches
+            flushingURL = old
+            let root = vaultRoot
+            getContentStrict { [weak self] text in
+                guard let self else { return }
+                if let text {
+                    try? text.write(to: old, atomically: true, encoding: .utf8)
+                    HistoryStore.snapshot(root: root, file: old, content: text)
+                }
+                self.flushingURL = nil
+                if let d = self.deferredOpenURL { self.deferredOpenURL = nil; self.open(d) }
+            }
         }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
@@ -963,8 +1020,11 @@ final class EditorModel: ObservableObject, Identifiable {
     }
 
     private func write(to url: URL) {
-        getContent { [weak self] text in
+        getContentStrict { [weak self] text in
             guard let self else { return }
+            // nil = the webview couldn't hand back the buffer (booting/busy) —
+            // writing anything now would truncate the file with "" or stale data.
+            guard let text else { self.statusText = "儲存暫停（編輯器未就緒）"; return }
             do {
                 try text.write(to: url, atomically: true, encoding: .utf8)
                 self.isDirty = false
@@ -980,12 +1040,16 @@ final class EditorModel: ObservableObject, Identifiable {
     // MARK: - Mirror (pop-out live preview) broadcast
 
     /// Debounced (400ms) push of the live buffer to any open preview windows.
+    /// Same stale-URL guard as auto-save: after a document switch the buffer
+    /// holds another file — broadcasting it under the captured url would show
+    /// the wrong content in the mirror.
     private func scheduleMirrorBroadcast() {
         guard EditorModel.mirrorCount > 0, let url = currentURL else { return }
         mirrorWork?.cancel()
         let sourceID = id.uuidString
         let work = DispatchWorkItem { [weak self] in
-            self?.getContent { text in
+            guard let self, self.currentURL == url else { return }
+            self.getContent { text in
                 NotificationCenter.default.post(name: .noteproMirrorContent, object: nil,
                                                 userInfo: ["url": url, "text": text, "sourceID": sourceID])
             }
@@ -1005,12 +1069,23 @@ final class EditorModel: ObservableObject, Identifiable {
 
     private var autoSaveWork: DispatchWorkItem?
     private var autoSaveEnabled: Bool { UserDefaults.standard.object(forKey: "autoSave") as? Bool ?? true }
+    /// URL whose unsaved edits are being flushed to disk right now (see open()).
+    private var flushingURL: URL?
+    /// An open() that arrived while its target was mid-flush; run after landing.
+    private var deferredOpenURL: URL?
 
     /// Debounced auto-save: ~2s after the last edit, save a titled document.
+    /// The work item re-checks `currentURL` when it fires: if the user switched
+    /// documents during the 2s window the buffer now holds the OTHER file, and
+    /// writing it to the captured URL would corrupt that file. (`open(_:)` also
+    /// flushes + cancels, this guard is the second line of defense.)
     private func scheduleAutoSave() {
         guard autoSaveEnabled, let url = currentURL else { return }
         autoSaveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.write(to: url) }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.currentURL == url else { return }
+            self.write(to: url)
+        }
         autoSaveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
     }
