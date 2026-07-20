@@ -256,6 +256,16 @@
       }
       .np-drag-out:active { cursor: grabbing; }
       .np-chart-wrap:hover .np-drag-out { opacity: 0.9; }
+      /* ⧉ copy the block as a tectonic-compiled VECTOR PDF. */
+      .np-vec-pdf {
+        position: absolute; top: 6px; right: 96px;
+        font-size: 11px; padding: 2px 8px; border-radius: 5px;
+        border: 1px solid rgba(127,127,127,0.4);
+        background: rgba(127,127,127,0.15); color: inherit;
+        cursor: pointer; opacity: 0; transition: opacity 0.15s;
+      }
+      .np-chart-wrap:hover .np-vec-pdf { opacity: 0.9; }
+      .np-dragging-out .np-vec-pdf { opacity: 0 !important; }
       /* Hidden while the native shell snapshots the figure for the drag. */
       .np-dragging-out .np-chart-edit, .np-dragging-out .np-drag-out {
         opacity: 0 !important;

@@ -360,6 +360,61 @@ final class EditorModel: ObservableObject, Identifiable {
         if let m = figureDragMonitor { NSEvent.removeMonitor(m); figureDragMonitor = nil }
     }
 
+    // MARK: - Copy a figure as VECTOR PDF (tectonic-compiled standalone TikZ)
+
+    /// Compile the block's TikZ into a tightly-cropped vector PDF and put it on
+    /// the clipboard (PDF data + a temp file URL, so both Keynote-paste and
+    /// Finder-paste work). Reuses one scratch dir so tectonic's cached
+    /// intermediates make repeat copies fast.
+    private func copyVectorPDF(_ body: [String: Any]) {
+        guard let tikz = body["tikz"] as? String,
+              !tikz.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Charts convert to a bare \begin{axis} — same rule as the LaTeX
+        // emitter: wrap in tikzpicture when the author (or converter) omitted it.
+        let body2 = tikz.contains("\\begin{tikzpicture}")
+            ? tikz : "\\begin{tikzpicture}\n\(tikz)\n\\end{tikzpicture}"
+        // Chinese titles/labels need the same CJK setup the main converter uses
+        // (ctex on XeLaTeX) — without it the glyphs silently vanish.
+        let hasCJK = tikz.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value)
+            || (0x3040...0x30FF).contains($0.value) || (0xAC00...0xD7AF).contains($0.value) }
+        let doc = """
+        \\documentclass[margin=2pt]{standalone}
+        \\usepackage{tikz}
+        \\usepackage{pgfplots}
+        \\pgfplotsset{compat=1.17}
+        \(hasCJK ? "\\usepackage{ctex}" : "")
+        \\begin{document}
+        \(body2)
+        \\end{document}
+        """
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("np-vector-pdf", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        statusText = "編譯向量 PDF 中…"
+        PDFExporter.compilePreview(content: doc, in: dir) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let e):
+                self.statusText = "向量 PDF 編譯失敗：\(e.localizedDescription)"
+            case .success(let pdfURL):
+                guard let data = try? Data(contentsOf: pdfURL) else {
+                    self.statusText = "向量 PDF 讀取失敗"; return
+                }
+                // Stable, visible filename for Finder-paste.
+                let fmt = DateFormatter(); fmt.dateFormat = "HHmmss"
+                let named = dir.appendingPathComponent("figure-\(fmt.string(from: Date())).pdf")
+                try? data.write(to: named)
+                let item = NSPasteboardItem()
+                item.setData(data, forType: .pdf)
+                item.setString(named.absoluteString, forType: .fileURL)
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.writeObjects([item])
+                self.statusText = "已複製向量 PDF（貼進 Keynote 即為可縮放圖）"
+            }
+        }
+    }
+
     /// Push the vault's note names to the web core (for `[[` completion + broken-link flags).
     func pushNoteList() {
         guard webReady,
@@ -440,6 +495,7 @@ final class EditorModel: ObservableObject, Identifiable {
         }
         if type == "dropImage" { saveDroppedImage(body); return }
         if type == "dragFigure" { beginFigureDrag(body); return }
+        if type == "copyVectorPDF" { copyVectorPDF(body); return }
         if type == "outline" { updateOutline(body["items"]); return }
         if type == "stats" { wordCount = (body["words"] as? NSNumber)?.intValue ?? 0; return }
         if type == "openLink" {

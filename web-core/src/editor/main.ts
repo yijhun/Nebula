@@ -32,6 +32,7 @@ import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
+import { chartToTikz } from "./chartTikz.js";
 import { setCsvFetcher, invalidateCsv } from "./chart.js";
 import { openDiagramStudio } from "./diagramStudio.js";
 import { openDiagram3dStudio } from "./diagram3d.js";
@@ -741,6 +742,22 @@ function boot(): void {
       if (key) postToHost({ type: "openCite", key });
       return;
     }
+    // ⧉ PDF on a rendered figure → compile the block to a vector PDF and put
+    // it on the system clipboard (host side runs tectonic).
+    const vecBtn = target?.closest(".np-vec-pdf") as HTMLElement | null;
+    if (vecBtn) {
+      e.preventDefault();
+      const wrap = vecBtn.closest("[data-line]") as HTMLElement | null;
+      const block = extractFenceAt(Number(wrap?.getAttribute("data-line")));
+      if (!block) return;
+      try {
+        const tikz = block.lang === "chart" ? chartToTikz(block.src) : block.src;
+        // A malformed chart converts to an "error: …" string — the preview
+        // already shows that error card; don't ship it to tectonic.
+        if (!tikz.startsWith("error:")) postToHost({ type: "copyVectorPDF", tikz });
+      } catch { /* malformed chart — leave it to the inline error card */ }
+      return;
+    }
     // ✎ on a rendered chart/diagram → jump the cursor into its block, then
     // open the matching studio.
     const chartEdit = target?.closest(".np-chart-edit") as HTMLElement | null;
@@ -754,6 +771,25 @@ function boot(): void {
       else openChartStudio(view);
     }
   });
+  /** The fenced block whose opening ``` sits at (or within 2 lines after) the
+   * given 1-based line: its language tag and inner source. */
+  function extractFenceAt(line: number): { lang: string; src: string } | null {
+    if (!Number.isFinite(line)) return null;
+    const doc = view.state.doc;
+    for (let ln = line; ln <= Math.min(line + 2, doc.lines); ln++) {
+      const open = /^\s*```(\w+)/.exec(doc.line(ln).text);
+      if (!open) continue;
+      const body: string[] = [];
+      for (let j = ln + 1; j <= doc.lines; j++) {
+        const t = doc.line(j).text;
+        if (/^\s*```\s*$/.test(t)) return { lang: open[1]!.toLowerCase(), src: body.join("\n") };
+        body.push(t);
+      }
+      return null;   // unclosed fence
+    }
+    return null;
+  }
+
   // ⠿ press-and-drag on a rendered figure → hand the gesture to the native
   // shell, which snapshots the SVG's rect and starts a real cross-app drag
   // (drop into Keynote / Finder as a PNG). Buttons are hidden for a moment so
