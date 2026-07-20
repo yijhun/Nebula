@@ -292,6 +292,14 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
+    /// Menu command: paste the clipboard's image (Keynote object, screenshot…)
+    /// into the note, regardless of any text flavors the copy also carries.
+    func pasteClipboardImage() {
+        guard let web = webView as? ImageDropWebView, web.pasteAsImage() else {
+            statusText = "剪貼簿裡沒有圖片"; return
+        }
+    }
+
     /// Convenience for native drags: timestamped filename.
     func saveImageBytes(_ bytes: Data, ext: String) {
         let fmt = DateFormatter(); fmt.dateFormat = "yyyyMMdd-HHmmss"

@@ -109,6 +109,11 @@ struct NoteproApp: App {
                 Button(LZ("還原最近的乾淨 Markdown 版本")) { focusedEditor?.restoreLatestCleanMarkdown() }
                     .disabled(focusedEditor == nil)
             }
+            CommandGroup(after: .pasteboard) {
+                Button(LZ("貼上為圖片 Paste as Image")) { focusedEditor?.pasteClipboardImage() }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                    .disabled(focusedEditor == nil)
+            }
             CommandGroup(after: .textEditing) {
                 Button(LZ("AI 協助… AI Assist")) { focusedEditor?.triggerAI() }
                     .keyboardShortcut("k", modifiers: .command)

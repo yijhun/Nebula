@@ -127,6 +127,8 @@ let EN: [String: String] = [
     "留空即用預設：英文 + 通用天文術語表。": "Leave blank for defaults: English + a general astronomy glossary.",
     "非英文演講（自動偵測語言）": "Non-English talk (auto-detect language)",
     "在 Zotero 開 PDF": "Open PDF in Zotero",
+    "貼上為圖片 Paste as Image": "Paste as Image",
+    "剪貼簿裡沒有圖片": "No image on the clipboard",
     "開此引用的 PDF（Zotero）": "Open Citation PDF (Zotero)",
     "我的待辦": "My To-dos", "搜尋待辦…": "Search to-dos…", "只看會議": "Meetings only",
     "沒有未完成的待辦": "No open to-dos",

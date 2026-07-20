@@ -33,24 +33,67 @@ final class ImageDropWebView: WKWebView {
 
     /// ⌘V with an image on the clipboard (Keynote object/slide copy, screenshot,
     /// browser image copy…): route it through the same import path as drags.
-    /// Only steps in when the clipboard is image-data-only (no text, no files),
-    /// so normal text pasting is untouched. WKWebView doesn't expose `paste(_:)`
-    /// for overriding, so the interception happens at the key-equivalent level
-    /// (views get ⌘V before the menu bar does).
+    /// ⌘V only steps in when the clipboard is image-data-only (no text, no
+    /// files), so normal text pasting is untouched. ⇧⌘V FORCES paste-as-image:
+    /// any image flavor wins even when the copy also carries text (Keynote
+    /// shapes with labels do). WKWebView doesn't expose `paste(_:)` for
+    /// overriding, so interception happens at the key-equivalent level.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers?.lowercased() == "v" {
-            let pb = NSPasteboard.general
-            if pb.string(forType: .string) == nil, !hasFileURLs(pb) {
-                for type in Self.dataTypes {
-                    if let data = pb.data(forType: type) {
-                        deliver(data, ext: type == .pdf ? "pdf" : type == .png ? "png" : "tiff")
-                        return true
-                    }
-                }
-            }
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Match the PHYSICAL key (kVK_ANSI_V = 9) OR either character field:
+        // with a CJK input source (e.g. Zhuyin) the V key reports "ㄇ" in
+        // charactersIgnoringModifiers, so a pure character comparison never
+        // fires for Chinese-input users; synthetic events may carry keyCode 0
+        // with the character only in `characters`.
+        let isV = event.keyCode == 9
+            || event.charactersIgnoringModifiers?.lowercased() == "v"
+            || event.characters?.lowercased() == "v"
+        if isV {
+            if mods == [.command, .shift] { if pasteImage(force: true) { return true } }
+            else if mods == .command { if pasteImage(force: false) { return true } }
         }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// Menu-path entry ("編輯 ▸ 貼上為圖片"): always prefers image data.
+    @discardableResult
+    func pasteAsImage() -> Bool { pasteImage(force: true) }
+
+    private func pasteImage(force: Bool) -> Bool {
+        let pb = NSPasteboard.general
+        logPasteboard(pb, force: force)
+        if !force {
+            guard pb.string(forType: .string) == nil, !hasFileURLs(pb) else { return false }
+        }
+        for type in Self.dataTypes {
+            if let data = pb.data(forType: type) {
+                deliver(data, ext: type == .pdf ? "pdf" : type == .png ? "png" : "tiff")
+                return true
+            }
+        }
+        // Force mode: fall back to whatever NSImage can decode from the board
+        // (covers exotic single-flavor image types).
+        if force, let img = NSImage(pasteboard: pb),
+           let tiff = img.tiffRepresentation {
+            deliver(tiff, ext: "tiff")
+            return true
+        }
+        return false
+    }
+
+    /// Diagnostic breadcrumb: what flavors did the copy actually carry?
+    private func logPasteboard(_ pb: NSPasteboard, force: Bool) {
+        let types = (pb.types ?? []).map(\.rawValue).joined(separator: ", ")
+        Self.debugLog("paste force=\(force) types=[\(types)]")
+    }
+
+    static func debugLog(_ msg: String) {
+        let line = "[\(Date())] \(msg)\n"
+        let u = URL(fileURLWithPath: "/tmp/notepro-paste.log")
+        if let d = line.data(using: .utf8) {
+            if let h = try? FileHandle(forWritingTo: u) { h.seekToEndOfFile(); h.write(d); try? h.close() }
+            else { try? d.write(to: u) }
+        }
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
