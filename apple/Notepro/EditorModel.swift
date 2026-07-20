@@ -300,10 +300,11 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
-    /// Convenience for native drags: timestamped filename.
+    /// Convenience for native drags/pastes: timestamped English filename
+    /// (ASCII-safe for LaTeX \includegraphics and cross-platform sync).
     func saveImageBytes(_ bytes: Data, ext: String) {
         let fmt = DateFormatter(); fmt.dateFormat = "yyyyMMdd-HHmmss"
-        saveImageBytes(bytes, name: "貼圖-\(fmt.string(from: Date())).\(ext)")
+        saveImageBytes(bytes, name: "pasted-\(fmt.string(from: Date())).\(ext)")
     }
 
     // MARK: - Drag a rendered figure OUT (into Keynote / Finder / …)
