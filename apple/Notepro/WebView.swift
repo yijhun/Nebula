@@ -31,6 +31,28 @@ final class ImageDropWebView: WKWebView {
         wantsNativeHandling(sender.draggingPasteboard) ? .copy : super.draggingUpdated(sender)
     }
 
+    /// ⌘V with an image on the clipboard (Keynote object/slide copy, screenshot,
+    /// browser image copy…): route it through the same import path as drags.
+    /// Only steps in when the clipboard is image-data-only (no text, no files),
+    /// so normal text pasting is untouched. WKWebView doesn't expose `paste(_:)`
+    /// for overriding, so the interception happens at the key-equivalent level
+    /// (views get ⌘V before the menu bar does).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            let pb = NSPasteboard.general
+            if pb.string(forType: .string) == nil, !hasFileURLs(pb) {
+                for type in Self.dataTypes {
+                    if let data = pb.data(forType: type) {
+                        deliver(data, ext: type == .pdf ? "pdf" : type == .png ? "png" : "tiff")
+                        return true
+                    }
+                }
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
         guard wantsNativeHandling(pb) else { return super.performDragOperation(sender) }
