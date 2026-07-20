@@ -1,5 +1,92 @@
 import SwiftUI
 import WebKit
+import UniformTypeIdentifiers
+
+/// WKWebView that also accepts image DATA drags (Keynote objects/slides,
+/// images dragged from browsers…). Those drags carry PDF/TIFF/PNG bytes or a
+/// file promise — no real file URL — so the DOM drop handler never sees them.
+/// Plain file drops still flow through the DOM path untouched.
+final class ImageDropWebView: WKWebView {
+    /// Called with raw image bytes + a suggested filename extension.
+    var onImageData: ((Data, String) -> Void)?
+
+    private static let dataTypes: [NSPasteboard.PasteboardType] =
+        [.pdf, .png, .tiff]
+    private static let promiseQueue = OperationQueue()
+
+    private func hasFileURLs(_ pb: NSPasteboard) -> Bool {
+        (pb.readObjects(forClasses: [NSURL.self],
+                        options: [.urlReadingFileURLsOnly: true]) as? [URL])?.isEmpty == false
+    }
+    private func wantsNativeHandling(_ pb: NSPasteboard) -> Bool {
+        guard !hasFileURLs(pb) else { return false }   // DOM handles real files
+        if Self.dataTypes.contains(where: { pb.data(forType: $0) != nil }) { return true }
+        return pb.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        wantsNativeHandling(sender.draggingPasteboard) ? .copy : super.draggingEntered(sender)
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        wantsNativeHandling(sender.draggingPasteboard) ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        guard wantsNativeHandling(pb) else { return super.performDragOperation(sender) }
+        // Direct data flavors first (Keynote canvas objects give PDF + TIFF).
+        for type in Self.dataTypes {
+            if let data = pb.data(forType: type) {
+                deliver(data, ext: type == .pdf ? "pdf" : type == .png ? "png" : "tiff")
+                return true
+            }
+        }
+        // File promises (e.g. slide thumbnails): receive into temp, then import.
+        if let receivers = pb.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+           !receivers.isEmpty {
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent("np-drop-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+            for r in receivers {
+                r.receivePromisedFiles(atDestination: dest, options: [:],
+                                       operationQueue: Self.promiseQueue) { [weak self] url, err in
+                    guard err == nil, let data = try? Data(contentsOf: url) else { return }
+                    DispatchQueue.main.async {
+                        self?.deliver(data, ext: url.pathExtension.lowercased())
+                    }
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    /// Normalize to PNG (preview + LaTeX friendly): PDF/TIFF are rasterized at
+    /// 2x; PNG/JPEG pass through unchanged.
+    private func deliver(_ data: Data, ext: String) {
+        switch ext {
+        case "png", "jpg", "jpeg", "gif", "webp":
+            onImageData?(data, ext)
+        default:
+            if let png = Self.rasterizePNG(data) { onImageData?(png, "png") }
+        }
+    }
+
+    static func rasterizePNG(_ data: Data, scale: CGFloat = 2) -> Data? {
+        guard let image = NSImage(data: data), image.size.width > 0 else { return nil }
+        let w = Int(image.size.width * scale), h = Int(image.size.height * scale)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                         isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = image.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
+    }
+}
 
 /// Hosts the web core in a WKWebView and bridges it to `EditorModel`.
 /// JS → Swift: `window.webkit.messageHandlers.notepro.postMessage(...)`.
@@ -16,9 +103,12 @@ struct WebView: NSViewRepresentable {
         // bypassing WKWebView's file:// subresource sandbox.
         config.setURLSchemeHandler(ImageSchemeHandler(), forURLScheme: "npimg")
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = ImageDropWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground") // avoid white flash
+        webView.onImageData = { [weak model] data, ext in
+            model?.saveImageBytes(data, ext: ext)
+        }
         model.attach(webView)
 
         if let url = Bundle.main.url(forResource: "index", withExtension: "html") {

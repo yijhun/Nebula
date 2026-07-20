@@ -125,18 +125,20 @@ function rehypeCharts() {
       // ```chart → inline SVG sketch. ```tikz with a studio model → render the
       // model as SVG right here in the markdown preview (no compile needed).
       // Hand-written tikz → placeholder card (real render in the PDF preview).
+      // ⠿ = press-and-drag the rendered figure out into Keynote/Finder as PNG.
+      const dragBtn = `<button class="np-drag-out" title="按住拖出 → 放進 Keynote / Finder（PNG）">⠿</button>`;
       let html: string;
       if (isChart) {
-        html = renderChart(src) +
+        html = renderChart(src) + dragBtn +
           `<button class="np-chart-edit" title="互動編輯（滑桿調參數）">✎ 編輯</button>`;
       } else {
         const model = parseDiagramModel(src);
         const model3 = model ? null : parseDiagram3dModel(src);
         html = model && model.length
-          ? diagramToSvg(model) +
+          ? diagramToSvg(model) + dragBtn +
             `<button class="np-chart-edit np-diagram-edit" title="用圖解編輯器打開">✎ 編輯</button>`
           : model3
-          ? diagram3dToSvg(model3.objs, model3.cam) +
+          ? diagram3dToSvg(model3.objs, model3.cam) + dragBtn +
             `<button class="np-chart-edit np-diagram3d-edit" title="用 3D 編輯器打開">✎ 編輯</button>`
           : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>`;
       }

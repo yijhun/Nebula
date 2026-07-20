@@ -246,6 +246,20 @@
         cursor: pointer; opacity: 0; transition: opacity 0.15s;
       }
       .np-chart-wrap:hover .np-chart-edit { opacity: 0.9; }
+      /* ⠿ drag handle — press and drag the figure into Keynote / Finder. */
+      .np-drag-out {
+        position: absolute; top: 6px; right: 66px;
+        font-size: 12px; padding: 2px 7px; border-radius: 5px;
+        border: 1px solid rgba(127,127,127,0.4);
+        background: rgba(127,127,127,0.15); color: inherit;
+        cursor: grab; opacity: 0; transition: opacity 0.15s;
+      }
+      .np-drag-out:active { cursor: grabbing; }
+      .np-chart-wrap:hover .np-drag-out { opacity: 0.9; }
+      /* Hidden while the native shell snapshots the figure for the drag. */
+      .np-dragging-out .np-chart-edit, .np-dragging-out .np-drag-out {
+        opacity: 0 !important;
+      }
       /* ```tikz placeholder — the real figure renders in the PDF preview. */
       .np-tikz-placeholder {
         font-size: 12px; padding: 14px; opacity: 0.75;

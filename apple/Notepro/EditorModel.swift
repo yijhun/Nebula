@@ -259,13 +259,20 @@ final class EditorModel: ObservableObject, Identifiable {
     }
 
     private func saveDroppedImage(_ body: [String: Any]) {
-        guard let root = vaultRoot,
-              let name = body["name"] as? String,
+        guard let name = body["name"] as? String,
               let dataURL = body["data"] as? String,
               let comma = dataURL.firstIndex(of: ","),
               let bytes = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])) else {
             statusText = "圖片拖入失敗（請先開啟資料夾）"; return
         }
+        saveImageBytes(bytes, name: name)
+    }
+
+    /// Save raw image bytes into the vault's attachment folder (unique name)
+    /// and insert the `![[…]]` embed at the cursor. Shared by DOM file drops
+    /// and native data drags (Keynote objects, browser images…).
+    func saveImageBytes(_ bytes: Data, name: String) {
+        guard let root = vaultRoot else { statusText = "圖片拖入失敗（請先開啟資料夾）"; return }
         let fm = FileManager.default
         let dir = attachmentDir(vaultRoot: root)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -283,6 +290,74 @@ final class EditorModel: ObservableObject, Identifiable {
         } catch {
             statusText = "圖片寫入失敗: \(error.localizedDescription)"
         }
+    }
+
+    /// Convenience for native drags: timestamped filename.
+    func saveImageBytes(_ bytes: Data, ext: String) {
+        let fmt = DateFormatter(); fmt.dateFormat = "yyyyMMdd-HHmmss"
+        saveImageBytes(bytes, name: "貼圖-\(fmt.string(from: Date())).\(ext)")
+    }
+
+    // MARK: - Drag a rendered figure OUT (into Keynote / Finder / …)
+
+    private var figureDragMonitor: Any?
+    private let figureDragSource = FigureDragSource()
+
+    /// JS sends the figure's viewport rect on mousedown of the ⠿ handle. We
+    /// snapshot that rect at 2x, stash it as a temp PNG, then hand the ongoing
+    /// mouse gesture to AppKit as a real cross-app drag session.
+    private func beginFigureDrag(_ body: [String: Any]) {
+        guard let webView,
+              let x = body["x"] as? Double, let y = body["y"] as? Double,
+              let w = body["w"] as? Double, let h = body["h"] as? Double,
+              w > 4, h > 4 else { return }
+        let cfg = WKSnapshotConfiguration()
+        cfg.rect = CGRect(x: x, y: y, width: w, height: h)
+        cfg.snapshotWidth = NSNumber(value: w * 2)   // 2x — crisp on slides
+        webView.takeSnapshot(with: cfg) { [weak self] image, _ in
+            guard let self, let image,
+                  let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+            else { return }
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("np-figure-drag", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let fmt = DateFormatter(); fmt.dateFormat = "HHmmss-SSS"
+            let file = dir.appendingPathComponent("figure-\(fmt.string(from: Date())).png")
+            do { try png.write(to: file) } catch { return }
+            self.armFigureDrag(file: file, image: image, size: CGSize(width: w, height: h))
+        }
+    }
+
+    /// Wait for the next mouse-drag of the ongoing press and start the session.
+    /// (The snapshot arrives asynchronously, so we can't start it on mousedown.)
+    private func armFigureDrag(file: URL, image: NSImage, size: CGSize) {
+        guard let webView else { return }
+        removeFigureDragMonitor()
+        figureDragMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp]) { [weak self] ev in
+            guard let self, let webView = self.webView else { return ev }
+            if ev.type == .leftMouseDragged, ev.window === webView.window {
+                self.removeFigureDragMonitor()
+                let item = NSDraggingItem(pasteboardWriter: file as NSURL)
+                let loc = webView.convert(ev.locationInWindow, from: nil)
+                item.setDraggingFrame(
+                    NSRect(x: loc.x - size.width / 2, y: loc.y - size.height / 2,
+                           width: size.width, height: size.height),
+                    contents: image)
+                webView.beginDraggingSession(with: [item], event: ev, source: self.figureDragSource)
+                return nil   // consumed — don't let the page select text
+            }
+            if ev.type == .leftMouseUp { self.removeFigureDragMonitor() }   // plain click
+            return ev
+        }
+        // Never leave a stray monitor if neither event arrives.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            self?.removeFigureDragMonitor()
+        }
+    }
+
+    private func removeFigureDragMonitor() {
+        if let m = figureDragMonitor { NSEvent.removeMonitor(m); figureDragMonitor = nil }
     }
 
     /// Push the vault's note names to the web core (for `[[` completion + broken-link flags).
@@ -364,6 +439,7 @@ final class EditorModel: ObservableObject, Identifiable {
             return
         }
         if type == "dropImage" { saveDroppedImage(body); return }
+        if type == "dragFigure" { beginFigureDrag(body); return }
         if type == "outline" { updateOutline(body["items"]); return }
         if type == "stats" { wordCount = (body["words"] as? NSNumber)?.intValue ?? 0; return }
         if type == "openLink" {
@@ -1851,4 +1927,10 @@ extension FocusedValues {
         get { self[EditorModelKey.self] }
         set { self[EditorModelKey.self] = newValue }
     }
+}
+
+/// Drag source for figure drag-out sessions: a plain copy, no side effects.
+final class FigureDragSource: NSObject, NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 }

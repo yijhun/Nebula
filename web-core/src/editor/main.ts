@@ -754,6 +754,23 @@ function boot(): void {
       else openChartStudio(view);
     }
   });
+  // ⠿ press-and-drag on a rendered figure → hand the gesture to the native
+  // shell, which snapshots the SVG's rect and starts a real cross-app drag
+  // (drop into Keynote / Finder as a PNG). Buttons are hidden for a moment so
+  // the snapshot is clean.
+  previewEl?.addEventListener("mousedown", (e) => {
+    const target = e.target as HTMLElement | null;
+    const handle = target?.closest(".np-drag-out") as HTMLElement | null;
+    if (!handle) return;
+    const wrap = handle.closest(".np-chart-wrap") as HTMLElement | null;
+    const svg = wrap?.querySelector("svg");
+    if (!wrap || !svg) return;
+    e.preventDefault();
+    wrap.classList.add("np-dragging-out");
+    window.setTimeout(() => wrap.classList.remove("np-dragging-out"), 700);
+    const r = svg.getBoundingClientRect();
+    postToHost({ type: "dragFigure", x: r.left, y: r.top, w: r.width, h: r.height });
+  });
   // Double click: jump the editor to that block's source line.
   // MathJax replaces `.math-display`'s children with an SVG inside `<mjx-container>`;
   // `Element.closest()` on an SVG element doesn't reliably traverse out of the
