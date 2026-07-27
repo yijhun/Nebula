@@ -824,6 +824,22 @@ final class EditorModel: ObservableObject, Identifiable {
         if isDirty, let url = currentURL { write(to: url) }
     }
 
+    /// The vault watcher says this editor's file changed on disk (Claude Code,
+    /// git pull, another window…). Reload only when it REALLY differs from the
+    /// buffer — our own autosaves also fire the watcher, and buffer == disk
+    /// then, so this stays a no-op for self-writes. While the user has unsaved
+    /// edits we deliberately do nothing (their next save wins; reloading would
+    /// throw away keystrokes).
+    func reloadIfExternallyChanged() {
+        guard webReady, !isDirty, let url = currentURL,
+              let disk = try? String(contentsOf: url, encoding: .utf8) else { return }
+        getContent { [weak self] buffer in
+            guard let self, !self.isDirty, self.currentURL == url, buffer != disk else { return }
+            self.open(url)
+            self.statusText = "已重新載入（檔案在外部被修改）"
+        }
+    }
+
     // MARK: - Properties (frontmatter form)
 
     /// Re-read the note's YAML frontmatter into `properties`.

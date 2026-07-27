@@ -29,6 +29,8 @@ extension Notification.Name {
     static let noteproOpenSearchReplace = Notification.Name("NoteproOpenSearchReplace")
     static let noteproOpenTodos = Notification.Name("NoteproOpenTodos")
     static let noteproFileRenamed = Notification.Name("NoteproFileRenamed") // userInfo["old"/"new"]: URL
+    static let noteproVaultFilesChanged = Notification.Name("NoteproVaultFilesChanged") // userInfo["paths"]: [String]
+    static let noteproOpenClaudeCode = Notification.Name("NoteproOpenClaudeCode")
 }
 
 /// Default editable AI presets ("label | instruction" per line).
@@ -60,6 +62,8 @@ struct SettingsView: View {
     @AppStorage("autoSave") private var autoSave = true
     @AppStorage("checkBeforeCompile") private var checkBeforeCompile = true
     @AppStorage("whisperModel") private var whisperModel = ""
+    @StateObject private var whisperDL = WhisperDownloader.shared
+    @AppStorage("autoTodoDigest") private var autoTodoDigest = true
     @AppStorage("adsToken") private var adsToken = ""
     @AppStorage("zoteroUserID") private var zoteroUserID = ""
     @AppStorage("zoteroAPIKey") private var zoteroAPIKey = ""
@@ -168,6 +172,7 @@ struct SettingsView: View {
                 Toggle(LZ("Vim 模式（無鼠標編輯）"), isOn: $vimMode)
                     .onChange(of: vimMode) { _, _ in NotificationCenter.default.post(name: .noteproVimChanged, object: nil) }
                 Toggle(LZ("自動存檔"), isOn: $autoSave)
+                Toggle(LZ("每週自動彙整待辦到 Daily Note"), isOn: $autoTodoDigest)
                 Toggle(LZ("編譯前先檢查語法"), isOn: $checkBeforeCompile)
                 HStack {
                     Text(LZ("Whisper 模型"))
@@ -176,6 +181,26 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     Button(LZ("選擇…")) { pickWhisperModel() }
                     if !whisperModel.isEmpty { Button(LZ("清除")) { whisperModel = "" } }
+                }
+                HStack {
+                    Text(LZ("完整 large-v3（更準、約 3 GB）"))
+                    Spacer()
+                    if whisperDL.downloading {
+                        ProgressView(value: whisperDL.progress).frame(width: 130)
+                        Text("\(Int(whisperDL.progress * 100))%").font(.caption).monospacedDigit()
+                        Button(LZ("取消下載")) { whisperDL.cancel() }
+                    } else if whisperDL.installed {
+                        if whisperModel == whisperDL.destFile.path {
+                            Text(LZ("使用中 ✓")).font(.caption).foregroundStyle(.green)
+                        } else {
+                            Button(LZ("改用 large-v3")) { whisperModel = whisperDL.destFile.path }
+                        }
+                    } else {
+                        Button(LZ("下載並使用")) { whisperDL.start() }
+                    }
+                }
+                if let e = whisperDL.error {
+                    Text(e).font(.caption).foregroundStyle(.orange)
                 }
                 Picker(LZ("預設 LaTeX 模板"), selection: $defaultTemplate) {
                     Text("ApJ (AASTeX)").tag("apj")

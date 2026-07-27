@@ -143,6 +143,9 @@ struct EditorPane: View {
                         Button { NotificationCenter.default.post(name: .noteproOpenTranscribe, object: nil) } label: {
                             Label(LZ("錄演講 / 轉文字"), systemImage: "waveform")
                         }
+                        Button { NotificationCenter.default.post(name: .noteproOpenClaudeCode, object: nil) } label: {
+                            Label(LZ("用 Claude Code 開啟 vault"), systemImage: "terminal")
+                        }
                     }
                     // ── AI ──
                     Section("AI") {

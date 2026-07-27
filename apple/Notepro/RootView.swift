@@ -122,6 +122,16 @@ struct RootView: View {
             projects.reload(vault: root)
         }
         .onChange(of: tabs.activeID) { _, _ in tabs.active.vaultRoot = vault.rootURL }
+        .task {
+            // Weekly to-do digest: wait for the vault + index to settle, then
+            // run at most once per 7 days (Settings-gated).
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            index.buildIfNeeded(vault)
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if let url = TodoDigest.autoRunIfDue(index.entries, vault: vault) {
+                tabs.active.statusText = "已自動彙整本週待辦 → \(url.lastPathComponent)"
+            }
+        }
         .onChange(of: selection) { _, newValue in
             // Open only on a single selection; multi-select is for batch ops.
             if newValue.count == 1, let url = newValue.first {
@@ -209,6 +219,22 @@ struct RootView: View {
                   let new = note.userInfo?["new"] as? URL else { return }
             for t in tabs.tabs { t.fileRenamed(from: old, to: new) }
             tabs.secondary.fileRenamed(from: old, to: new)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenClaudeCode)) { _ in
+            if let err = ClaudeCodeLauncher.open(vault: vault.rootURL) {
+                tabs.active.statusText = err
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproVaultFilesChanged)) { note in
+            let paths = Set((note.userInfo?["paths"] as? [String] ?? [])
+                .map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+            // Empty (FSEvents overflow) → check every open editor to be safe.
+            func hit(_ e: EditorModel) -> Bool {
+                guard let cur = e.currentURL?.standardizedFileURL.path else { return false }
+                return paths.isEmpty || paths.contains(cur)
+            }
+            for t in tabs.tabs where hit(t) { t.reloadIfExternallyChanged() }
+            if hit(tabs.secondary) { tabs.secondary.reloadIfExternallyChanged() }
         }
     }
 

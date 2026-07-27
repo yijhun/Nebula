@@ -6,9 +6,10 @@ import CoreServices
 /// covers both external edits and the app's own saves.
 final class FSWatcher {
     private var stream: FSEventStreamRef?
-    private let onChange: () -> Void
+    private let onChange: ([String]) -> Void
 
-    init(onChange: @escaping () -> Void) { self.onChange = onChange }
+    /// `onChange` receives the changed file paths (may be empty on overflow).
+    init(onChange: @escaping ([String]) -> Void) { self.onChange = onChange }
 
     func start(_ url: URL) {
         stop()
@@ -17,10 +18,15 @@ final class FSWatcher {
             info: Unmanaged.passUnretained(self).toOpaque(),
             retain: nil, release: nil, copyDescription: nil
         )
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, numEvents, eventPaths, _, _ in
             guard let info else { return }
             let watcher = Unmanaged<FSWatcher>.fromOpaque(info).takeUnretainedValue()
-            DispatchQueue.main.async { watcher.onChange() }
+            // With kFSEventStreamCreateFlagFileEvents the paths land as a CFArray
+            // of CFStrings — one per changed file.
+            let paths = (Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue()
+                         as? [String]) ?? []
+            _ = numEvents
+            DispatchQueue.main.async { watcher.onChange(paths) }
         }
         let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
         guard let stream = FSEventStreamCreate(

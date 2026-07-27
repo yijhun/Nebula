@@ -376,29 +376,11 @@ struct TodoLibraryView: View {
 
     /// Write the currently-listed open todos into today's daily note as a
     /// "## 待辦彙整" section with [[wikilinks]] back to each source note.
-    /// Re-running replaces the previous digest section instead of stacking.
+    /// Section building/replacing lives in TodoDigest (shared with the weekly
+    /// auto-digest).
     private func digestToDaily() {
-        guard let url = vault.todayNote(),
-              let original = try? String(contentsOf: url, encoding: .utf8) else { return }
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
-        var section = "## 待辦彙整 (\(fmt.string(from: Date())))\n"
-        for g in groups {
-            let base = g.entry.url.deletingPathExtension().lastPathComponent
-            section += "\n### [[\(base)]]\n"
-            for t in g.todos { section += "- [ ] \(t.text)\n" }
-        }
-        var lines = original.components(separatedBy: "\n")
-        // Replace an existing digest (any date) or append at the end.
-        if let start = lines.firstIndex(where: { $0.hasPrefix("## 待辦彙整") }) {
-            var end = start + 1
-            while end < lines.count, !lines[end].hasPrefix("## ") { end += 1 }
-            lines.replaceSubrange(start..<end, with: section.components(separatedBy: "\n"))
-        } else {
-            if lines.last?.isEmpty == false { lines.append("") }
-            lines.append(contentsOf: section.components(separatedBy: "\n"))
-        }
-        HistoryStore.snapshot(root: vault.rootURL, file: url, content: original)
-        try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        let g = groups.map { TodoDigest.Group(entry: $0.entry, todos: $0.todos.map(\.text)) }
+        guard let url = TodoDigest.write(g, vault: vault) else { return }
         onChanged(url)
         onOpen(url, nil)
     }

@@ -33,7 +33,14 @@ final class VaultModel: ObservableObject {
 
     /// Called after every refresh (e.g. to rebuild the search index).
     var onChanged: (() -> Void)?
-    private lazy var watcher = FSWatcher { [weak self] in self?.refresh() }
+    private lazy var watcher = FSWatcher { [weak self] paths in
+        self?.refresh()
+        // Let open editors reload files changed on disk (Claude Code, git pull,
+        // iCloud sync, another window…). Empty on FSEvents overflow — receivers
+        // treat that as "anything may have changed".
+        NotificationCenter.default.post(name: .noteproVaultFilesChanged, object: nil,
+                                        userInfo: ["paths": paths])
+    }
 
     func isPinned(_ url: URL) -> Bool { pinned.contains(url.path) }
     func togglePin(_ url: URL) {
