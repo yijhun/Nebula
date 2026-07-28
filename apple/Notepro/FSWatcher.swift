@@ -21,14 +21,16 @@ final class FSWatcher {
         let callback: FSEventStreamCallback = { _, info, numEvents, eventPaths, _, _ in
             guard let info else { return }
             let watcher = Unmanaged<FSWatcher>.fromOpaque(info).takeUnretainedValue()
-            // With kFSEventStreamCreateFlagFileEvents the paths land as a CFArray
-            // of CFStrings — one per changed file.
+            // eventPaths is a CFArray of CFStrings ONLY because the stream is
+            // created with kFSEventStreamCreateFlagUseCFTypes below — without
+            // that flag it's a raw char** and this cast segfaults.
             let paths = (Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue()
                          as? [String]) ?? []
             _ = numEvents
             DispatchQueue.main.async { watcher.onChange(paths) }
         }
-        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
+        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer
+                           | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault, callback, &context,
             [url.path] as CFArray,
