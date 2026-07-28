@@ -7,6 +7,13 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    # Pinned to the last tag WITHOUT the Metal renderer — the classic CoreText
+    # renderer needs no Metal toolchain (which this Xcode lacks) and is the
+    # proven path.
+    exactVersion: 1.11.2
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -26,6 +33,8 @@ targets:
       - path: Notepro/AppIcon.icns
         type: file
         buildPhase: resources
+    dependencies:
+      - package: SwiftTerm
     postBuildScripts:
       # Embed the self-contained editor bundle (run `vite build` first).
       # Out-of-tree single-file resources are unreliable via the resources list,

@@ -15,6 +15,7 @@ struct RootView: View {
     @StateObject private var recorder = MeetingRecorder()
     @State private var selection = Set<URL>()
     @State private var modal: Modal?
+    @State private var showClaudePane = false
 
     /// All modal sheets routed through ONE presentation slot (SwiftUI only
     /// reliably presents one `.sheet` per view).
@@ -70,29 +71,37 @@ struct RootView: View {
             VaultSidebar(selection: $selection)
                 .frame(minWidth: 200)
         } detail: {
-            Group {
-                if tabs.splitOn {
-                    if tabs.splitVertical {
-                        VSplitView {
-                            EditorPane().frame(minHeight: 160)
-                            SecondaryPane()
-                                .environmentObject(tabs.secondary)
-                                .frame(minHeight: 140)
+            HSplitView {
+                Group {
+                    if tabs.splitOn {
+                        if tabs.splitVertical {
+                            VSplitView {
+                                EditorPane().frame(minHeight: 160)
+                                SecondaryPane()
+                                    .environmentObject(tabs.secondary)
+                                    .frame(minHeight: 140)
+                            }
+                        } else {
+                            HSplitView {
+                                EditorPane().frame(minWidth: 260)
+                                SecondaryPane()
+                                    .environmentObject(tabs.secondary)
+                                    .frame(minWidth: 240)
+                            }
                         }
                     } else {
-                        HSplitView {
-                            EditorPane().frame(minWidth: 260)
-                            SecondaryPane()
-                                .environmentObject(tabs.secondary)
-                                .frame(minWidth: 240)
-                        }
+                        EditorPane()
                     }
-                } else {
-                    EditorPane()
+                }
+                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+                .animation(.easeInOut(duration: 0.2), value: tabs.splitOn)
+                // Claude Code as a resizable side pane (drag the divider).
+                if showClaudePane {
+                    ClaudeTermPane(vault: vault.rootURL, onClose: { showClaudePane = false })
+                        .frame(minWidth: 300, idealWidth: 440, maxWidth: 800)
                 }
             }
-            .frame(minWidth: 420)
-            .animation(.easeInOut(duration: 0.2), value: tabs.splitOn)
         }
     }
 
@@ -221,8 +230,10 @@ struct RootView: View {
             tabs.secondary.fileRenamed(from: old, to: new)
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenClaudeCode)) { _ in
-            if let err = ClaudeCodeLauncher.open(vault: vault.rootURL) {
-                tabs.active.statusText = err
+            if ClaudeCodeLauncher.claudePath == nil {
+                tabs.active.statusText = "找不到 claude CLI（安裝：npm install -g @anthropic-ai/claude-code）"
+            } else {
+                showClaudePane.toggle()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproVaultFilesChanged)) { note in
