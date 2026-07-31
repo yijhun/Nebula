@@ -62,17 +62,53 @@ final class PDFController: ObservableObject {
         do { try png.write(to: pngURL) } catch { status = "存檔失敗：\(error.localizedDescription)"; return }
         vec.write(to: pdfURL)
 
-        // Embed markdown → clipboard, with source attribution.
+        // Embed markdown, with source attribution.
         let pageNo = (document?.index(for: page) ?? 0) + 1
-        var md = "![[\(pngURL.lastPathComponent)]]\n"
-        md += key.isEmpty ? "圖擷自 \(url.lastPathComponent) p.\(pageNo)\n"
-                          : "圖擷自 [@\(key)] p.\(pageNo)\n"
+        let source = key.isEmpty ? url.lastPathComponent : "[@\(key)]"
+        let md = "\n![[\(pngURL.lastPathComponent)]]\n*圖：擷自 \(source) p.\(pageNo)*\n"
+        // Straight into the note being edited in the main window; the clipboard
+        // copy is the fallback when no note is open there.
+        NotificationCenter.default.post(name: .noteproInsertIntoNote, object: nil,
+                                        userInfo: ["text": md])
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(md, forType: .string)
         vault.refresh()
-        status = "已擷取 \(pngURL.lastPathComponent)（含向量 PDF）— 嵌入語法已複製，到筆記 ⌘V"
-        captureMode = false
+        status = "已插入 \(pngURL.lastPathComponent)（另存向量 PDF）— 也複製了嵌入語法"
+        // Capture mode stays ON so several figures can be grabbed in a row;
+        // toggle it off (or press Esc mid-drag) when done.
+    }
+
+    /// Find the citekey for this PDF by looking for a literature note in the
+    /// vault that references the file (frontmatter `pdf:` or anywhere in the
+    /// body). Runs off-main; leaves `citekey` untouched when nothing matches or
+    /// the user already picked one.
+    func resolveCitekey(in vault: VaultModel) {
+        guard citekey.isEmpty, let root = vault.rootURL else { return }
+        let fileName = url.lastPathComponent
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let fm = FileManager.default
+            guard let en = fm.enumerator(at: root, includingPropertiesForKeys: nil,
+                                         options: [.skipsHiddenFiles]) else { return }
+            var found: String?
+            var scanned = 0
+            for case let f as URL in en where f.pathExtension.lowercased() == "md" {
+                scanned += 1
+                if scanned > 3000 { break }          // bound the walk on huge vaults
+                guard let text = try? String(contentsOf: f, encoding: .utf8),
+                      text.contains(fileName),
+                      let key = IndexService.parseFrontmatterValue(text, key: "cite"),
+                      !key.isEmpty else { continue }
+                found = key
+                break
+            }
+            guard let found else { return }
+            DispatchQueue.main.async {
+                guard let self, self.citekey.isEmpty else { return }
+                self.citekey = found
+                self.status = "已自動連結 [@\(found)]"
+            }
+        }
     }
 
     /// Highlight the current text selection (yellow), line by line.
@@ -248,6 +284,7 @@ struct PDFReaderView: View {
                 .frame(minWidth: 480, minHeight: 400)
         }
         .navigationTitle(ctrl.url.lastPathComponent)
+        .onAppear { ctrl.resolveCitekey(in: vault) }
     }
 
     private var toolbar: some View {

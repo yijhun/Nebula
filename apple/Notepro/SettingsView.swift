@@ -31,6 +31,8 @@ extension Notification.Name {
     static let noteproFileRenamed = Notification.Name("NoteproFileRenamed") // userInfo["old"/"new"]: URL
     static let noteproVaultFilesChanged = Notification.Name("NoteproVaultFilesChanged") // userInfo["paths"]: [String]
     static let noteproOpenClaudeCode = Notification.Name("NoteproOpenClaudeCode")
+    /// Insert text at the cursor of the main window's active note. userInfo["text"]: String
+    static let noteproInsertIntoNote = Notification.Name("NoteproInsertIntoNote")
 }
 
 /// Default editable AI presets ("label | instruction" per line).

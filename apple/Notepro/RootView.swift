@@ -236,6 +236,13 @@ struct RootView: View {
                 showClaudePane.toggle()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproInsertIntoNote)) { note in
+            // Only the main window that owns a note takes this (the PDF reader
+            // is a separate window and can't reach the editor directly).
+            guard let text = note.userInfo?["text"] as? String,
+                  tabs.active.currentURL != nil else { return }
+            tabs.active.insertText(text)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .noteproVaultFilesChanged)) { note in
             let paths = Set((note.userInfo?["paths"] as? [String] ?? [])
                 .map { URL(fileURLWithPath: $0).standardizedFileURL.path })
