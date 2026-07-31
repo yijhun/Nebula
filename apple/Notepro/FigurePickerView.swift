@@ -155,24 +155,38 @@ struct FigurePickerView: View {
         let dir = folder.isEmpty ? root : root.appendingPathComponent(folder, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
+        let fm = FileManager.default
         let slug = fig.tag.replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "/", with: "-")
-        var base = "fig-\(citekey)-\(slug)"
+        let stem = "fig-\(citekey)-\(slug)"
+        // Inserting the same figure twice should point at the file already in
+        // the vault, not pile up -2, -3, -4… copies of identical bytes. Only a
+        // genuinely different image under the same name gets a new number.
+        let incoming = try? Data(contentsOf: fig.image)
+        var base = stem
         var png = dir.appendingPathComponent("\(base).png")
         var n = 2
-        while FileManager.default.fileExists(atPath: png.path) {
-            base = "fig-\(citekey)-\(slug)-\(n)"; png = dir.appendingPathComponent("\(base).png"); n += 1
+        var needsCopy = true
+        while fm.fileExists(atPath: png.path) {
+            if let incoming, let existing = try? Data(contentsOf: png), existing == incoming {
+                needsCopy = false; break
+            }
+            base = "\(stem)-\(n)"; png = dir.appendingPathComponent("\(base).png"); n += 1
         }
-        do { try FileManager.default.copyItem(at: fig.image, to: png) }
-        catch { status = "\(LZ("複製失敗"))：\(error.localizedDescription)"; return }
+        if needsCopy {
+            do { try fm.copyItem(at: fig.image, to: png) }
+            catch { status = "\(LZ("複製失敗"))：\(error.localizedDescription)"; return }
+        }
 
         // Vector companion, cropped from the source paper at the same region.
-        if let rect = fig.rect, let src = pdfPath, let doc = PDFDocument(url: src),
+        let vecURL = dir.appendingPathComponent("\(base).pdf")
+        if !fm.fileExists(atPath: vecURL.path),
+           let rect = fig.rect, let src = pdfPath, let doc = PDFDocument(url: src),
            let page = doc.page(at: fig.pageIndex), let clip = page.copy() as? PDFPage {
             clip.setBounds(rect, for: .cropBox)
             clip.setBounds(rect, for: .mediaBox)
             let vec = PDFDocument(); vec.insert(clip, at: 0)
-            vec.write(to: dir.appendingPathComponent("\(base).pdf"))
+            vec.write(to: vecURL)
         }
 
         // Always a one-line source; the paper's full caption only when asked for.
