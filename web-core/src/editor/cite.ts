@@ -5,7 +5,7 @@
  * and inserts the chosen item's citekey at the cursor (format decided by the
  * caller: `[@key]` for Markdown, `\autocite{key}` for LaTeX).
  */
-import { call } from "./bridge.js";
+import { call, notify } from "./bridge.js";
 import { t } from "./i18n.js";
 
 interface ZoteroItem { citekey: string; title: string; authors: string; year: string; }
@@ -56,18 +56,37 @@ export function openCite(onInsert: (citekey: string) => void): void {
     closeCite();
   }
 
+  /** Insert the citation AND ask the shell to open the paper's figure picker. */
+  function insertWithFigure(item: ZoteroItem): void {
+    onInsert(item.citekey);
+    notify({ type: "pickFigure", citekey: item.citekey, title: item.title });
+    closeCite();
+  }
+
   function render(): void {
     list.innerHTML = "";
     results.forEach((it, i) => {
       const row = document.createElement("div");
       row.style.cssText =
-        "padding:8px 10px;border-radius:6px;cursor:pointer;" +
+        "padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px;" +
         (i === 0 ? "background:#2c313a;" : "");
       const meta = [it.authors, it.year].filter(Boolean).join(" · ");
-      row.innerHTML =
+      const text = document.createElement("div");
+      text.style.cssText = "flex:1;min-width:0";
+      text.innerHTML =
         `<div style="font-size:13px">${escapeHtml(it.title)}</div>` +
         `<div style="font-size:11px;opacity:.6">${escapeHtml(meta)} — <code>@${escapeHtml(it.citekey)}</code></div>`;
-      row.onclick = () => insert(it);
+      text.onclick = () => insert(it);
+      // 圖 = insert the citation, then pick a figure from this paper's PDF.
+      const fig = document.createElement("button");
+      fig.textContent = t("插圖");
+      fig.title = t("插入引用並從這篇論文挑圖");
+      fig.style.cssText =
+        "flex:none;font-size:11px;padding:3px 9px;border-radius:5px;cursor:pointer;" +
+        "border:1px solid #4a5060;background:#2f3542;color:#e6e6e6";
+      fig.onclick = (e) => { e.stopPropagation(); insertWithFigure(it); };
+      row.appendChild(text);
+      row.appendChild(fig);
       list.appendChild(row);
     });
   }

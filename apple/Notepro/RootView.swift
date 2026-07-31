@@ -23,6 +23,7 @@ struct RootView: View {
         case palette(String, String)   // mode ("files"/"content"), seed query
         case semantic, graph, history, shortcuts, transcribe, literature, cowork
         case library, searchReplace, todos
+        case figures(String, String)   // citekey, title
         case database(DBTarget)
         var id: String {
             switch self {
@@ -37,6 +38,7 @@ struct RootView: View {
             case .library: return "library"
             case .searchReplace: return "searchReplace"
             case .todos: return "todos"
+            case .figures(let k, _): return "figures-\(k)"
             case .database(let t): return "db-\(t.id)"
             }
         }
@@ -236,6 +238,10 @@ struct RootView: View {
                 showClaudePane.toggle()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .noteproPickFigure)) { note in
+            guard let key = note.userInfo?["citekey"] as? String, !key.isEmpty else { return }
+            modal = .figures(key, note.userInfo?["title"] as? String ?? "")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .noteproInsertIntoNote)) { note in
             // Only the main window that owns a note takes this (the PDF reader
             // is a separate window and can't reach the editor directly).
@@ -338,6 +344,13 @@ struct RootView: View {
                 onClose: { modal = nil }
             )
             .environmentObject(vault).environmentObject(index)
+        case .figures(let citekey, let title):
+            FigurePickerView(
+                citekey: citekey, paperTitle: title,
+                onInserted: { md in tabs.active.insertText(md) },
+                onClose: { modal = nil }
+            )
+            .environmentObject(vault)
         case .todos:
             TodoLibraryView(
                 onOpen: { url, line in selection = [url]; tabs.open(url)

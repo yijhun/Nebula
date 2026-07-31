@@ -26,6 +26,11 @@ export function hasNativeBridge(): boolean {
   return host() !== undefined;
 }
 
+/** Fire-and-forget notification to the native shell (no reply expected). */
+export function notify(msg: unknown): void {
+  host()?.postMessage(msg);
+}
+
 /** Call a native method and await its result. */
 export function call(method: string, params: unknown): Promise<unknown> {
   const h = host();

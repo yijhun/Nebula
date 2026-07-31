@@ -33,6 +33,8 @@ extension Notification.Name {
     static let noteproOpenClaudeCode = Notification.Name("NoteproOpenClaudeCode")
     /// Insert text at the cursor of the main window's active note. userInfo["text"]: String
     static let noteproInsertIntoNote = Notification.Name("NoteproInsertIntoNote")
+    /// Open the figure picker for a cited paper. userInfo["citekey"/"title"]: String
+    static let noteproPickFigure = Notification.Name("NoteproPickFigure")
 }
 
 /// Default editable AI presets ("label | instruction" per line).

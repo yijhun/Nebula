@@ -167,6 +167,35 @@ enum ZoteroService {
         return map
     }
 
+    /// One attachment of a library item.
+    struct Attachment {
+        let path: String        // local file path
+        let itemKey: String     // Zotero attachment key (also its storage folder)
+        var isPDF: Bool { path.lowercased().hasSuffix(".pdf") }
+    }
+
+    /// Local attachments for a citekey (Better BibTeX `item.attachments`).
+    /// The `open` field looks like `zotero://open-pdf/library/items/<KEY>`;
+    /// that KEY is also the storage folder name and the key the zotero-figure
+    /// plugin caches its analysis under.
+    static func attachments(_ citekey: String, completion: @escaping ([Attachment]) -> Void) {
+        let key = citekey.trimmingCharacters(in: .whitespaces)
+        guard enabled, !key.isEmpty else { DispatchQueue.main.async { completion([]) }; return }
+        rpc("item.attachments", [key]) { result in
+            var out: [Attachment] = []
+            if case .success(let r) = result, let arr = r as? [[String: Any]] {
+                for a in arr {
+                    let path = a["path"] as? String ?? ""
+                    guard !path.isEmpty else { continue }
+                    let open = a["open"] as? String ?? ""
+                    let itemKey = open.components(separatedBy: "/").last ?? ""
+                    out.append(Attachment(path: path, itemKey: itemKey))
+                }
+            }
+            DispatchQueue.main.async { completion(out) }
+        }
+    }
+
     /// Find the citekey of the library item matching an anchor. Prefers DOI,
     /// then arXiv id, then a title query. Returns nil if nothing matches.
     static func resolveCitekey(doi: String = "", arxiv: String = "", title: String = "",

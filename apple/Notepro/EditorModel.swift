@@ -505,6 +505,13 @@ final class EditorModel: ObservableObject, Identifiable {
         if type == "dropImage" { saveDroppedImage(body); return }
         if type == "dragFigure" { beginFigureDrag(body); return }
         if type == "copyVectorPDF" { copyVectorPDF(body); return }
+        if type == "pickFigure" {
+            NotificationCenter.default.post(
+                name: .noteproPickFigure, object: nil,
+                userInfo: ["citekey": body["citekey"] as? String ?? "",
+                           "title": body["title"] as? String ?? ""])
+            return
+        }
         if type == "outline" { updateOutline(body["items"]); return }
         if type == "stats" { wordCount = (body["words"] as? NSNumber)?.intValue ?? 0; return }
         if type == "openLink" {
