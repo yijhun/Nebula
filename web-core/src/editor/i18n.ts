@@ -35,7 +35,7 @@ const EN: Record<string, string> = {
   "搜尋中…": "Searching…",
   "筆結果": "results",
   "插圖": "Figure",
-  "插入引用並從這篇論文挑圖": "Insert citation and pick a figure from this paper",
+  "從這篇論文挑一張圖插入": "Pick a figure from this paper",
   "找不到結果": "No results",
   // Slash menu
   "/ 標題 H1": "/ Heading 1",

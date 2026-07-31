@@ -56,9 +56,11 @@ export function openCite(onInsert: (citekey: string) => void): void {
     closeCite();
   }
 
-  /** Insert the citation AND ask the shell to open the paper's figure picker. */
+  /** Open the paper's figure picker. No citation is inserted here — the
+   * figure's own source line already carries `[@key]`, so inserting one too
+   * would cite the paper twice. Click the row instead when you want a plain
+   * citation. */
   function insertWithFigure(item: ZoteroItem): void {
-    onInsert(item.citekey);
     notify({ type: "pickFigure", citekey: item.citekey, title: item.title });
     closeCite();
   }
@@ -80,7 +82,7 @@ export function openCite(onInsert: (citekey: string) => void): void {
       // 圖 = insert the citation, then pick a figure from this paper's PDF.
       const fig = document.createElement("button");
       fig.textContent = t("插圖");
-      fig.title = t("插入引用並從這篇論文挑圖");
+      fig.title = t("從這篇論文挑一張圖插入");
       fig.style.cssText =
         "flex:none;font-size:11px;padding:3px 9px;border-radius:5px;cursor:pointer;" +
         "border:1px solid #4a5060;background:#2f3542;color:#e6e6e6";
