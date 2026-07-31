@@ -22,6 +22,10 @@ struct FigurePickerView: View {
     @State private var source = ""
     @State private var status = ""
     @State private var showFormulas = false
+    /// Papers' own captions are often a whole paragraph — too much for a note,
+    /// so they're opt-in. The short attribution line is always kept, otherwise
+    /// a figure in your notes has no traceable source.
+    @AppStorage("figureIncludeCaption") private var includeCaption = false
 
     private var shown: [PaperFigure] {
         showFormulas ? figures : figures.filter(\.isFigureOrTable)
@@ -49,6 +53,9 @@ struct FigurePickerView: View {
                 Text("[@\(citekey)]").font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
+            Toggle(LZ("含圖說"), isOn: $includeCaption)
+                .toggleStyle(.switch).controlSize(.small)
+                .help(LZ("插入論文原本的圖說全文（預設只放一行出處）"))
             if formulaCount > 0 {
                 Toggle(LZ("含公式"), isOn: $showFormulas)
                     .toggleStyle(.switch).controlSize(.small)
@@ -168,9 +175,9 @@ struct FigurePickerView: View {
             vec.write(to: dir.appendingPathComponent("\(base).pdf"))
         }
 
-        let cap = fig.caption.isEmpty
-            ? "\(fig.tag) — [@\(citekey)]"
-            : "\(fig.caption) — [@\(citekey)]"
+        // Always a one-line source; the paper's full caption only when asked for.
+        var cap = "\(fig.tag) · [@\(citekey)] p.\(fig.pageIndex + 1)"
+        if includeCaption, !fig.caption.isEmpty { cap = "\(fig.caption) — \(cap)" }
         onInserted("\n![[\(png.lastPathComponent)]]\n*\(cap)*\n")
         vault.refresh()
         status = "\(LZ("已插入")) \(png.lastPathComponent)"
