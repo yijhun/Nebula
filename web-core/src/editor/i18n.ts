@@ -36,6 +36,7 @@ const EN: Record<string, string> = {
   "筆結果": "results",
   "插圖": "Figure",
   "從這篇論文挑一張圖插入": "Pick a figure from this paper",
+  "編譯失敗（檢查語法或缺少套件）": "compile failed (check syntax / missing package)",
   "找不到結果": "No results",
   // Slash menu
   "/ 標題 H1": "/ Heading 1",

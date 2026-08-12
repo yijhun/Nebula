@@ -107,6 +107,12 @@ function rehypeCachedMathjax() {
   };
 }
 
+/** Escape a string for use inside a double-quoted HTML attribute. */
+function escapeAttr(s: string): string {
+  return s.replace(/[&<>"]/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;");
+}
+
 /** Render ```chart code blocks into inline SVG charts (see chart.ts). */
 function rehypeCharts() {
   return (tree: unknown) => {
@@ -142,7 +148,11 @@ function rehypeCharts() {
           : model3
           ? diagram3dToSvg(model3.objs, model3.cam) + dragBtn + vecBtn +
             `<button class="np-chart-edit np-diagram3d-edit" title="用 3D 編輯器打開">✎ 編輯</button>`
-          : `<div class="np-tikz-placeholder">📐 TikZ 圖（LaTeX 原生）— 開「即時 PDF 預覽」或編譯後可見</div>` + vecBtn;
+          // Hand-written TikZ: the shell compiles it with tectonic and swaps a
+          // rendered image in (see `renderPendingTikz` in main.ts). Carries its
+          // source so the request needs no second lookup.
+          : `<div class="np-tikz-pending" data-tikz="${escapeAttr(src)}">` +
+            `<span class="np-tikz-spinner">📐 TikZ — 編譯中…</span></div>` + vecBtn;
       }
       const frag = fromHtml(html, { fragment: true });
       const props = node.properties as Record<string, unknown> | undefined;

@@ -650,6 +650,11 @@ final class EditorModel: ObservableObject, Identifiable {
             ZoteroService.exportBib(keys) { [weak self] bib in
                 self?.resolveRPC(id, ok: true, payload: bib)
             }
+        case "tikz.render":
+            let src = params["src"] as? String ?? ""
+            TikzRenderer.shared.render(src, vaultRoot: vaultRoot) { [weak self] dataURL in
+                self?.resolveRPC(id, ok: dataURL != nil, payload: dataURL ?? "")
+            }
         case "zotero.meta":
             let keys = params["keys"] as? [String] ?? []
             ZoteroService.meta(keys) { [weak self] map in

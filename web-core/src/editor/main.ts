@@ -236,8 +236,52 @@ function scheduleRender(): void {
       const html = renderHtml(view.state.doc.toString());
       ensureCiteLabels(getLastCiteKeys());
       morphPreview(html);
+      renderPendingTikz();
     }
   }, delay);
+}
+
+/** Rendered hand-written TikZ, keyed by source. Survives re-renders so the
+ * image reappears instantly instead of recompiling on every keystroke. */
+const tikzCache = new Map<string, string>();   // source → data URL ("" = failed)
+const tikzInFlight = new Set<string>();
+
+/** Swap compiled images into the `.np-tikz-pending` placeholders the preview
+ * emits for hand-written TikZ. The shell compiles with tectonic, so any
+ * package or library the document uses works. */
+function renderPendingTikz(): void {
+  const pending = previewEl?.querySelectorAll<HTMLElement>(".np-tikz-pending");
+  if (!pending?.length) return;
+  pending.forEach((el) => {
+    const src = el.getAttribute("data-tikz") ?? "";
+    if (!src.trim()) return;
+    const done = tikzCache.get(src);
+    if (done !== undefined) { paintTikz(el, done); return; }
+    if (tikzInFlight.has(src)) return;
+    tikzInFlight.add(src);
+    call("tikz.render", { src })
+      .then((res) => {
+        const url = typeof res === "string" ? res : "";
+        tikzCache.set(src, url);
+        // Re-query: the preview may have re-rendered while we waited.
+        previewEl?.querySelectorAll<HTMLElement>(".np-tikz-pending").forEach((n) => {
+          if (n.getAttribute("data-tikz") === src) paintTikz(n, url);
+        });
+      })
+      .catch(() => { tikzCache.set(src, ""); })
+      .finally(() => tikzInFlight.delete(src));
+  });
+}
+
+function paintTikz(el: HTMLElement, dataURL: string): void {
+  if (dataURL) {
+    el.innerHTML = `<img class="np-tikz-img" src="${dataURL}" alt="TikZ">`;
+    el.classList.remove("np-tikz-pending");
+    el.classList.add("np-tikz-done");
+  } else {
+    el.innerHTML =
+      `<span class="np-tikz-spinner">📐 TikZ — ${t("編譯失敗（檢查語法或缺少套件）")}</span>`;
+  }
 }
 
 /** Render the live Markdown→LaTeX source into the preview pane (in-place "to
