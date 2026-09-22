@@ -51,6 +51,9 @@ targets:
           fi
           mkdir -p "$DEST"
           cp "$SRC" "$DEST/index.html"
+          # Chat panel (second vite build).
+          CHAT="$PROJECT_DIR/../web-core/dist/chat.html"
+          if [ -f "$CHAT" ]; then cp "$CHAT" "$DEST/chat.html"; fi
     info:
       path: Notepro/Info.plist
       properties:

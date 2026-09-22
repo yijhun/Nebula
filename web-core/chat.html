@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>Nebula Chat</title>
+  <style>
+    :root {
+      --bg: #1e2127; --panel: #252931; --line: #343a46; --text: #e3e5e8; --dim: #9aa0aa;
+      --user: #2d3b55; --accent: #6ea8fe; --ok: #3fb950; --bad: #f85149;
+      --add-bg: rgba(63,185,80,.16); --del-bg: rgba(248,81,73,.16); --code: #1a1d22;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff; --panel: #f6f7f9; --line: #dfe2e7; --text: #1f2328; --dim: #656d76;
+        --user: #e8f0fe; --accent: #0969da; --ok: #1a7f37; --bad: #cf222e;
+        --add-bg: rgba(26,127,55,.12); --del-bg: rgba(207,34,46,.10); --code: #f3f4f6;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    button { font: inherit; color: inherit; cursor: pointer; }
+
+    /* header */
+    #top { display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+           border-bottom: 1px solid var(--line); flex: none; position: relative; }
+    #acct { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1;
+            background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; text-align: left; }
+    #acct:hover { border-color: var(--line); background: var(--panel); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dim); }
+    .dot.on { background: var(--ok); }
+    .acct-text { min-width: 0; }
+    .acct-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .acct-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { font-size: 10px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); flex: none; }
+    select, .tbtn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; font-size: 12px; color: var(--text); }
+    .tbtn:hover { border-color: var(--accent); }
+
+    #menu { position: absolute; top: 44px; left: 8px; right: 8px; z-index: 10; display: none;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,.35); padding: 6px; }
+    #menu.open { display: block; }
+    .mrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
+    .mrow.pick { cursor: pointer; }
+    .mrow.pick:hover { background: var(--bg); }
+    .mrow.active { outline: 1px solid var(--accent); }
+    .mrow .grow { flex: 1; min-width: 0; }
+    .mrow .mini { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--bg); border: 1px solid var(--line); }
+    .msep { height: 1px; background: var(--line); margin: 5px 2px; }
+    .mhint { font-size: 11px; color: var(--dim); padding: 2px 8px 6px; }
+
+    /* transcript */
+    #log { flex: 1; overflow-y: auto; padding: 12px 12px 4px; }
+    .empty { color: var(--dim); text-align: center; margin-top: 30%; font-size: 12px; line-height: 1.8; }
+    .empty b { color: var(--text); font-size: 14px; }
+    .msg { margin: 0 0 12px; }
+    .user { background: var(--user); border-radius: 10px; padding: 7px 11px; margin-left: 12%;
+            white-space: pre-wrap; word-wrap: break-word; }
+    .asst { padding: 0 2px; }
+    .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+    .md p { margin: .45em 0; }
+    .md h1, .md h2, .md h3 { font-size: 1.08em; margin: .8em 0 .35em; }
+    .md pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+    .md code { background: var(--code); border-radius: 4px; padding: 0 3px; font: 12px ui-monospace, Menlo, monospace; }
+    .md pre code { padding: 0; background: none; }
+    .md table { border-collapse: collapse; margin: .5em 0; } .md td, .md th { border: 1px solid var(--line); padding: 3px 7px; }
+    .md ul, .md ol { padding-left: 1.4em; margin: .4em 0; }
+    .md blockquote { margin: .4em 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--dim); }
+    .md mjx-container { overflow-x: auto; overflow-y: hidden; }
+    .md svg { max-width: 100%; }
+    .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .tool { border: 1px solid var(--line); border-radius: 7px; margin: 6px 0; background: var(--panel); overflow: hidden; }
+    .tool summary { cursor: pointer; padding: 5px 9px; font-size: 12px; color: var(--dim); list-style: none;
+                    display: flex; gap: 6px; align-items: center; }
+    .tool summary::-webkit-details-marker { display: none; }
+    .tool summary .st { margin-left: auto; font-size: 11px; }
+    .tool .out { margin: 0; padding: 7px 9px; border-top: 1px solid var(--line); font: 11px/1.45 ui-monospace, Menlo, monospace;
+                 white-space: pre-wrap; max-height: 200px; overflow: auto; color: var(--dim); }
+    .edit .hd { display: flex; align-items: center; gap: 6px; padding: 6px 9px; font-size: 12px; }
+    .edit .hd .path { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .edit .hd .sp { flex: 1; }
+    .edit .mini { font-size: 11px; padding: 1px 8px; border-radius: 5px; background: var(--bg); border: 1px solid var(--line); }
+    .edit .mini:hover { border-color: var(--accent); }
+    .diff { margin: 0; border-top: 1px solid var(--line); font: 11.5px/1.5 ui-monospace, Menlo, monospace; max-height: 260px; overflow: auto; }
+    .diff div { padding: 0 9px; white-space: pre-wrap; word-break: break-word; }
+    .diff .add { background: var(--add-bg); } .diff .del { background: var(--del-bg); }
+    .diff .ctx { color: var(--dim); }
+    .reverted { opacity: .55; } .reverted .path { text-decoration: line-through; }
+
+    .notice { font-size: 12px; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); }
+    .notice.error { border-color: var(--bad); color: var(--bad); }
+    .done { font-size: 10.5px; color: var(--dim); text-align: right; margin: -6px 2px 12px; }
+
+    /* composer */
+    #composer { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; }
+    #chips { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+    .chip { font-size: 11px; padding: 2px 9px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel); color: var(--dim); }
+    .chip.on { border-color: var(--accent); color: var(--accent); }
+    #box { display: flex; gap: 6px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 6px; }
+    #box:focus-within { border-color: var(--accent); }
+    #input { flex: 1; resize: none; border: 0; outline: 0; background: none; color: var(--text); font: inherit;
+             max-height: 180px; min-height: 22px; padding: 2px 4px; }
+    #send { flex: none; border: 0; border-radius: 7px; background: var(--accent); color: #fff; padding: 4px 11px; font-weight: 600; }
+    #send.stop { background: var(--bad); }
+    #send:disabled { opacity: .45; cursor: default; }
+    #hint { font-size: 10.5px; color: var(--dim); margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <button id="acct" title="切換帳號"></button>
+    <select id="mode" title="Claude 能做的事">
+      <option value="acceptEdits">可改筆記</option>
+      <option value="plan">唯讀</option>
+    </select>
+    <button class="tbtn" id="new" title="開始新對話">新對話</button>
+    <div id="menu"></div>
+  </div>
+  <div id="log"></div>
+  <div id="composer">
+    <div id="chips">
+      <button class="chip" id="attNote">＋ 目前筆記</button>
+      <button class="chip" id="attSel">＋ 選取內容</button>
+    </div>
+    <div id="box">
+      <textarea id="input" rows="1" placeholder="問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）"></textarea>
+      <button id="send">送出</button>
+    </div>
+    <div id="hint"></div>
+  </div>
+  <script type="module" src="/src/chat/main.ts"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$PATH"
 
 echo "==> [1/4] Building web core (vite)…"
-( cd "$ROOT/web-core" && npx vite build )
+( cd "$ROOT/web-core" && npx vite build && npx vite build --config vite.chat.config.ts )
 
 echo "==> [2/4] Generating Xcode project (xcodegen)…"
 ( cd "$ROOT/apple" && xcodegen generate )

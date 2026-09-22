@@ -166,6 +166,14 @@ struct NoteproApp: App {
                     .keyboardShortcut("f", modifiers: [.command, .option])
                     .disabled(focusedEditor == nil)
             }
+            // In the SYSTEM View menu (not the custom one below, which shares
+            // its English title), so it's reachable unambiguously.
+            CommandGroup(after: .sidebar) {
+                Button(LZ("AI 對話面板")) {
+                    NotificationCenter.default.post(name: .noteproOpenClaudeCode, object: nil)
+                }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+            }
             CommandMenu(Text(LZ("檢視 View"))) {
                 Button(LZ("編輯模式")) { focusedEditor?.viewMode = .edit }
                     .keyboardShortcut("1", modifiers: .command).disabled(focusedEditor == nil)

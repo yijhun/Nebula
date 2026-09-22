@@ -100,8 +100,13 @@ struct RootView: View {
                 .animation(.easeInOut(duration: 0.2), value: tabs.splitOn)
                 // Claude Code as a resizable side pane (drag the divider).
                 if showClaudePane {
-                    ClaudeTermPane(vault: vault.rootURL, onClose: { showClaudePane = false })
-                        .frame(minWidth: 300, idealWidth: 440, maxWidth: 800)
+                    ChatPane(vault: vault.rootURL, onClose: { showClaudePane = false })
+                        .frame(minWidth: 320, idealWidth: 460, maxWidth: 820)
+                        .onAppear {
+                            ChatController.shared.context = { [weak vault, weak tabs] in
+                                (vault?.rootURL, tabs?.active)
+                            }
+                        }
                 }
             }
         }
@@ -232,11 +237,8 @@ struct RootView: View {
             tabs.secondary.fileRenamed(from: old, to: new)
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproOpenClaudeCode)) { _ in
-            if ClaudeCodeLauncher.claudePath == nil {
-                tabs.active.statusText = "找不到 claude CLI（安裝：npm install -g @anthropic-ai/claude-code）"
-            } else {
-                showClaudePane.toggle()
-            }
+            // The panel itself explains a missing CLI / signed-out account.
+            showClaudePane.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproPickFigure)) { note in
             guard let key = note.userInfo?["citekey"] as? String, !key.isEmpty else { return }
