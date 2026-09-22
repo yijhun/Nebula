@@ -63,9 +63,29 @@ function assistantFor(state: ChatState, msgId: string): Extract<Item, { kind: "a
   return fresh;
 }
 
-function currentStreaming(state: ChatState): Extract<Item, { kind: "assistant" }> | undefined {
+/** The assistant item this turn is writing into, whatever its streaming flag —
+ * the CLI emits one `assistant` event per content block, so a message's later
+ * blocks must land in the same item as its earlier ones. */
+function currentAssistant(state: ChatState): Extract<Item, { kind: "assistant" }> | undefined {
   const last = state.items[state.items.length - 1];
-  return last?.kind === "assistant" && last.streaming ? last : undefined;
+  return last?.kind === "assistant" ? last : undefined;
+}
+
+/** Merge one authoritative block into the item, keeping what streaming and the
+ * tool results already put there. */
+function mergeBlock(item: Extract<Item, { kind: "assistant" }>, b: Block): void {
+  if (b.type === "tool") {
+    const old = item.blocks.find((x): x is ToolBlock => x.type === "tool" && x.id === b.id);
+    if (old) { old.name = b.name; old.input = b.input; return; }
+    item.blocks.push(b);
+    return;
+  }
+  const last = item.blocks[item.blocks.length - 1];
+  // The streamed partial (or the empty placeholder a thinking block left) is
+  // the same text still arriving — replace rather than duplicate it.
+  if (last?.type === "text" && b.text.startsWith(last.text)) { last.text = b.text; return; }
+  if (item.blocks.some((x) => x.type === "text" && x.text === b.text)) return;
+  item.blocks.push(b);
 }
 
 function toBlocks(content: unknown): Block[] {
@@ -128,7 +148,7 @@ export function reduce(state: ChatState, ev: Json): ChatState {
       if (e.type === "message_start") {
         assistantFor(state, str(obj(e.message).id));
       } else if (e.type === "content_block_start") {
-        const a = currentStreaming(state) ?? assistantFor(state, "");
+        const a = currentAssistant(state) ?? assistantFor(state, "");
         const cb = obj(e.content_block);
         if (cb.type === "text") a.blocks.push({ type: "text", text: str(cb.text) });
         else if (cb.type === "tool_use") {
@@ -137,7 +157,7 @@ export function reduce(state: ChatState, ev: Json): ChatState {
           a.blocks.push({ type: "text", text: "" });   // placeholder keeps indexes aligned
         }
       } else if (e.type === "content_block_delta") {
-        const a = currentStreaming(state);
+        const a = currentAssistant(state);
         const idx = typeof e.index === "number" ? e.index : -1;
         const blk = a && idx >= 0 ? a.blocks[idx] : a?.blocks[a.blocks.length - 1];
         const d = obj(e.delta);
@@ -149,16 +169,15 @@ export function reduce(state: ChatState, ev: Json): ChatState {
 
     case "assistant": {
       const m = obj(ev.message);
-      const a = assistantFor(state, str(m.id));
-      // The complete message is authoritative — but keep results/reverts that
-      // already arrived for its tool blocks.
-      const prev = new Map(a.blocks.filter((b): b is ToolBlock => b.type === "tool").map((b) => [b.id, b]));
-      a.blocks = toBlocks(m.content).map((b) => {
-        if (b.type !== "tool") return b;
-        const old = prev.get(b.id);
-        return old ? { ...b, result: old.result, isError: old.isError, reverted: old.reverted } : b;
-      });
-      a.streaming = false;
+      const id = str(m.id);
+      // One `assistant` event per content block: merge into the item this
+      // message is already using (adopting an id-less streaming item), never
+      // replace — replacing would drop the message's earlier blocks.
+      const last = currentAssistant(state);
+      const a = (last && (last.msgId === id || !last.msgId)) ? last : assistantFor(state, id);
+      a.msgId = id;
+      for (const b of toBlocks(m.content)) mergeBlock(a, b);
+      // Stays "streaming" until the turn's `result` — more blocks may follow.
       return state;
     }
 
@@ -175,7 +194,13 @@ export function reduce(state: ChatState, ev: Json): ChatState {
     }
 
     case "result": {
-      for (const it of state.items) if (it.kind === "assistant") it.streaming = false;
+      for (const it of state.items) {
+        if (it.kind !== "assistant") continue;
+        it.streaming = false;
+        // Drop the placeholders that kept streaming indexes aligned (thinking
+        // blocks and the like) so the stored transcript stays clean.
+        it.blocks = it.blocks.filter((b) => b.type !== "text" || b.text.trim() !== "");
+      }
       const secs = typeof ev.duration_ms === "number" ? ev.duration_ms / 1000 : 0;
       const isError = ev.is_error === true;
       if (isError) {
@@ -208,6 +233,11 @@ export function reduce(state: ChatState, ev: Json): ChatState {
       if (e === "notice") state.items.push({ kind: "notice", level: "error", text: str(ev.text) });
       else if (e === "cleared") {
         state.items = []; state.busy = false; state.sessionID = ""; state.authFailed = false;
+      }
+      else if (e === "restore") {
+        // A stored transcript coming back after a restart / pane switch.
+        const items = ev.items;
+        if (Array.isArray(items)) { state.items = items as Item[]; state.busy = false; }
       }
       else if (e === "reverted") {
         const t = findTool(state, str(ev.editID));

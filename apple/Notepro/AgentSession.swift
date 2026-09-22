@@ -19,6 +19,9 @@ final class AgentSession {
     let model: String?          // nil = the CLI's default
     /// Continue an earlier conversation (after Stop, or a mode/model change).
     let resumeID: String?
+    /// Folders outside `cwd` the CLI may read — attachments from Zotero's
+    /// storage, Downloads, and so on.
+    let extraDirs: [String]
 
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
@@ -30,9 +33,10 @@ final class AgentSession {
     private var buffer = Data()
     private let errTail = PipeTail()
 
-    init(account: AIAccount, cwd: URL, mode: Mode, model: String?, resumeID: String? = nil) {
+    init(account: AIAccount, cwd: URL, mode: Mode, model: String?,
+         resumeID: String? = nil, extraDirs: [String] = []) {
         self.account = account; self.cwd = cwd; self.mode = mode
-        self.model = model; self.resumeID = resumeID
+        self.model = model; self.resumeID = resumeID; self.extraDirs = extraDirs
         self.sessionID = account.provider == .codex ? resumeID : nil
     }
 
@@ -85,6 +89,7 @@ final class AgentSession {
                  "--permission-mode", mode == .readOnly ? "plan" : "acceptEdits",
                  "--append-system-prompt", Self.systemNote]
         if let m = model, !m.isEmpty { a += ["--model", m] }
+        for d in extraDirs { a += ["--add-dir", d] }
         if let r = resumeID { a += ["--resume", r] }
         return a
     }
@@ -97,6 +102,7 @@ final class AgentSession {
               "-s", mode == .readOnly ? "read-only" : "workspace-write",
               "-C", cwd.path]
         if let m = model, !m.isEmpty { a += ["-m", m] }
+        for d in extraDirs { a += ["--add-dir", d] }
         a += ["\(Self.systemNote)\n\n\(prompt)"]
         return a
     }

@@ -17,9 +17,10 @@ interface Account {
   loggedIn: boolean; isDefault: boolean;
 }
 interface ModelOption { id: string; name: string }
+interface Attachment { path: string; name: string; isDir?: boolean }
 interface HostState {
   accounts: Account[]; activeID: string; mode: string; codexInstalled: boolean; vault: string;
-  model: string; models: ModelOption[]; lang: string;
+  model: string; models: ModelOption[]; lang: string; attachments: Attachment[];
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -34,7 +35,7 @@ const hint = $<HTMLDivElement>("hint");
 
 let chat: ChatState = emptyState();
 let host: HostState = { accounts: [], activeID: "", mode: "acceptEdits", codexInstalled: false,
-                        vault: "", model: "", models: [], lang: "zh" };
+                        vault: "", model: "", models: [], lang: "zh", attachments: [] };
 let attachNote = true;
 let attachSel = false;
 
@@ -133,6 +134,15 @@ function renderBlocks(blocks: Block[], streaming: boolean): string {
   return html;
 }
 
+/** Hand the transcript to the shell so it survives pane switches and quits. */
+let persistTimer: number | undefined;
+function persist(): void {
+  window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    post({ type: "persist", items: chat.items });
+  }, 700);
+}
+
 // ── Transcript ──
 let scheduled = false;
 function render(): void {
@@ -163,6 +173,8 @@ function render(): void {
     log.querySelectorAll("details").forEach((d, i) => { if (open.has(i)) d.open = true; });
     if (nearBottom) log.scrollTop = log.scrollHeight;
     updateComposer();
+    renderAttachments();
+    if (!chat.busy) persist();
   });
 }
 
@@ -232,6 +244,19 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
 });
 sendBtn.addEventListener("click", submit);
+
+function renderAttachments(): void {
+  const box = $("files");
+  box.innerHTML = host.attachments.map((f) =>
+    `<span class="chip file" title="${esc(f.path)}">${f.isDir ? "📁" : "📎"} ${esc(f.name)}` +
+    `<button class="x" data-unattach="${esc(f.path)}">✕</button></span>`).join("");
+  box.style.display = host.attachments.length ? "flex" : "none";
+}
+$("files").addEventListener("click", (e) => {
+  const p = (e.target as HTMLElement).getAttribute("data-unattach");
+  if (p) post({ type: "removeAttachment", path: p });
+});
+$("attFile").addEventListener("click", () => post({ type: "addFiles" }));
 
 function syncChips(): void {
   $("attNote").classList.toggle("on", attachNote);
@@ -325,6 +350,7 @@ menu.addEventListener("click", (e) => {
     applyLang();
     modeSel.value = host.mode;
     renderModels();
+    renderAttachments();
     renderAccountButton();
     if (menu.classList.contains("open")) renderMenu();
     render();
@@ -341,6 +367,8 @@ function applyLang(): void {
   $("new").textContent = t("新對話");
   $("attNote").textContent = t("＋ 目前筆記");
   $("attSel").textContent = t("＋ 選取內容");
+  $("attFile").textContent = t("＋ 檔案");
+  $("drop").textContent = t("放開以附加檔案");
   input.placeholder = t("問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）");
   updateComposer();
 }
@@ -354,6 +382,7 @@ function renderModels(): void {
 modelSel.addEventListener("change", () => post({ type: "setModel", model: modelSel.value }));
 
 syncChips();
+renderAttachments();
 applyLang();
 renderModels();
 renderAccountButton();

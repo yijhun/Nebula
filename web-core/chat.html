@@ -110,6 +110,14 @@
     #send.stop { background: var(--bad); }
     #send:disabled { opacity: .45; cursor: default; }
     #hint { font-size: 10.5px; color: var(--dim); margin-top: 4px; }
+    #files { display: none; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .chip.file { display: inline-flex; align-items: center; gap: 5px; color: var(--text);
+                 border-color: var(--accent); max-width: 100%; }
+    .chip.file .x { border: 0; background: none; padding: 0 0 0 2px; opacity: .6; font-size: 11px; }
+    .chip.file .x:hover { opacity: 1; }
+    #drop { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+            background: rgba(110,168,254,.12); border: 2px dashed var(--accent); border-radius: 10px;
+            color: var(--accent); font-size: 13px; z-index: 20; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -124,10 +132,13 @@
     <div id="menu"></div>
   </div>
   <div id="log"></div>
+  <div id="drop">放開以附加檔案</div>
   <div id="composer">
+    <div id="files"></div>
     <div id="chips">
       <button class="chip" id="attNote">＋ 目前筆記</button>
       <button class="chip" id="attSel">＋ 選取內容</button>
+      <button class="chip" id="attFile">＋ 檔案</button>
     </div>
     <div id="box">
       <textarea id="input" rows="1" placeholder="問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）"></textarea>

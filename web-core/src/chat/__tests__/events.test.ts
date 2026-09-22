@@ -25,7 +25,9 @@ describe("chat event reducer", () => {
     reduce(s, { type: "assistant", message: { id: "m1", content: [{ type: "text", text: "Hello!" }] } });
     expect(s.items.length).toBe(2);                     // same item, not a duplicate
     expect(a.blocks).toEqual([{ type: "text", text: "Hello!" }]);
-    expect(a.streaming).toBe(false);
+    expect(a.streaming).toBe(true);                     // more blocks may still follow
+    reduce(s, { type: "result", is_error: false, duration_ms: 500 });
+    expect(a.streaming).toBe(false);                    // the turn's `result` ends it
   });
 
   it("attaches tool results and keeps them across the authoritative message", () => {
@@ -47,6 +49,38 @@ describe("chat event reducer", () => {
     expect(toolSummary(t)).toBe("讀取 …/notes/a.md");   // long paths are shortened
     expect(s.busy).toBe(false);
     expect(s.items[s.items.length - 1]).toEqual({ kind: "done", seconds: 2.3, isError: false });
+  });
+
+  it("one assistant event per content block — no empty duplicate cards", () => {
+    // The real shape (recorded): each block of a message arrives as its own
+    // `assistant` event, after being streamed. Merging, not replacing, is what
+    // keeps a message's text AND its tool call, with no half-built copies.
+    const s = addUser(emptyState(), "list the notes");
+    feed(s, [
+      se({ type: "message_start", message: { id: "m1" } }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
+      { type: "assistant", message: { id: "m1", content: [{ type: "thinking", thinking: "…" }] } },
+      se({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+      se({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Let me look" } }),
+      { type: "assistant", message: { id: "m1", content: [{ type: "text", text: "Let me look." }] } },
+      se({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "t1", name: "Bash" } }),
+      se({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{\"com" } }),
+      { type: "assistant", message: { id: "m1", content: [
+        { type: "tool_use", id: "t1", name: "Bash", input: { command: "find . -name '*.md'" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "a.md\nb.md" }] } },
+      { type: "result", is_error: false, duration_ms: 4000 },
+    ]);
+    const assistants = s.items.filter((i) => i.kind === "assistant");
+    expect(assistants.length).toBe(1);                        // one item, not three
+    const a = assistants[0]!;
+    if (a.kind !== "assistant") throw new Error();
+    expect(a.blocks.length).toBe(2);                          // text + tool, thinking dropped
+    expect(a.blocks[0]).toEqual({ type: "text", text: "Let me look." });
+    const tool = a.blocks[1]!;
+    if (tool.type !== "tool") throw new Error();
+    expect(tool.input).toEqual({ command: "find . -name '*.md'" });   // not the half-streamed JSON
+    expect(tool.result).toBe("a.md\nb.md");
+    expect(a.streaming).toBe(false);
   });
 
   it("a second assistant message in the same turn becomes its own item", () => {

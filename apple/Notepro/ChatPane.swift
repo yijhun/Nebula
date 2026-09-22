@@ -22,6 +22,12 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
 
     private let accounts = AIAccountStore.shared
     private var ready = false
+    /// Files dropped on the panel, offered to the next message.
+    private var attachments: [URL] = []
+    /// Transcript + CLI session id per account, so a conversation survives
+    /// switching panes, closing the sidebar and quitting the app.
+    private var saved: [String: [String: Any]] = [:]
+    private var saveWork: DispatchWorkItem?
 
     // MARK: JS → Swift
 
@@ -30,9 +36,11 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         switch type {
         case "ready":
             ready = true
+            loadSaved()
             accounts.seedInstalledLogins()
             accounts.refreshAll()
             pushState()
+            restoreTranscript()
             // Status checks are async — push again once they've landed.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.pushState() }
         case "send":
@@ -42,8 +50,11 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         case "stop":
             session?.stop()
         case "newChat":
+            attachments = []
+            if let key = accounts.active?.id.uuidString { saved[key] = nil; writeSaved() }
             restart(resume: false)
             emit(["type": "nebula", "event": "cleared"])
+            pushState()
         case "setMode":
             mode = (body["mode"] as? String) == "plan" ? .readOnly : .edit
             if session != nil { restart(resume: true) }
@@ -55,9 +66,13 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         case "switchAccount":
             if let s = body["id"] as? String, let id = UUID(uuidString: s) {
                 accounts.activeID = id
-                restart(resume: false)                    // sessions don't cross accounts
+                attachments = []
+                // Each account keeps its own conversation; bring that one back
+                // rather than throwing the previous one away.
+                restart(resume: false)
                 emit(["type": "nebula", "event": "cleared"])
                 pushState()
+                restoreTranscript()
             }
         case "addAccount":
             let provider: AIAccount.Provider = (body["provider"] as? String) == "codex" ? .codex : .claude
@@ -81,6 +96,14 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
                 if wasActive { restart(resume: false); emit(["type": "nebula", "event": "cleared"]) }
                 pushState()
             }
+        case "persist":
+            if let items = body["items"] as? [[String: Any]] { persist(items: items) }
+        case "clearAttachments":
+            attachments = []; pushState()
+        case "removeAttachment":
+            if let p = body["path"] as? String { attachments.removeAll { $0.path == p }; pushState() }
+        case "addFiles":
+            pickFiles()
         case "openFile":
             if let path = body["path"] as? String { openInEditor(path) }
         case "revertEdit":
@@ -96,20 +119,26 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
 
     private func ensureSession() -> Bool {
         if let s = session, s.isRunning { return true }
+        if session == nil, let rid = restoredSessionID, !rid.isEmpty {
+            restoredSessionID = nil
+            return restart(resume: true, forcedResumeID: rid)
+        }
         return restart(resume: session?.sessionID != nil)
     }
 
     @discardableResult
-    private func restart(resume: Bool) -> Bool {
+    private func restart(resume: Bool, forcedResumeID: String? = nil) -> Bool {
         let old = session
-        let resumeID = resume ? old?.sessionID : nil
+        let resumeID = forcedResumeID ?? (resume ? old?.sessionID : nil)
         old?.onExit = nil; old?.onLine = nil
         old?.stop()
         session = nil
         guard let acct = accounts.active else { return false }
         let cwd = context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
+        grantedDirs = extraDirs(for: cwd)
         let s = AgentSession(account: acct, cwd: cwd, mode: mode,
-                             model: model.isEmpty ? nil : model, resumeID: resumeID)
+                             model: model.isEmpty ? nil : model, resumeID: resumeID,
+                             extraDirs: grantedDirs)
         s.onLine = { [weak self] line in self?.forward(line) }
         s.onExit = { [weak self] code, err in
             guard let self, self.session === s else { return }
@@ -132,12 +161,23 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             let rel = ctx.vault.map { url.path.replacingOccurrences(of: $0.path + "/", with: "") } ?? url.path
             extras.append("（目前開啟的筆記：\(rel)）")
         }
+        if !attachments.isEmpty {
+            let list = attachments.map { u in
+                Self.isDirectory(u) ? "- \(u.path)/  （資料夾，可用 Glob/Grep 瀏覽）" : "- \(u.path)"
+            }.joined(separator: "\n")
+            extras.append("附加的檔案／資料夾（用 Read 開檔，PDF 也讀得了；資料夾用 Glob 列出內容）：\n\(list)")
+        }
         let finish = { [weak self] (selection: String) in
             guard let self else { return }
             if !selection.isEmpty { extras.append("選取的內容：\n```\n\(selection)\n```") }
             if !extras.isEmpty { prompt += "\n\n" + extras.joined(separator: "\n\n") }
+            // Files outside the vault need the CLI to be granted their folder,
+            // which is fixed at spawn time — restart when the set has grown.
+            if self.needsRestartForAttachments() { self.restart(resume: true) }
             guard self.ensureSession() else { return }
             self.session?.send(prompt)
+            self.attachments = []
+            self.pushState()
         }
         if attachSelection, let editor = ctx.editor {
             editor.getCoworkPayload(scope: "selection") { finish($0) }
@@ -209,11 +249,101 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             "codexInstalled": AIAccountStore.codexPath != nil,
             "vault": context().vault?.lastPathComponent ?? "",
             "lang": currentlyEnglish() ? "en" : "zh",
+            "attachments": attachments.map {
+                ["path": $0.path, "name": $0.lastPathComponent, "isDir": Self.isDirectory($0)]
+            },
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: state),
               let s = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.nebulaChat && window.nebulaChat.setState(\(Self.js(s)))")
     }
+
+    // MARK: attachments
+
+    /// Folders the CLI must be allowed to read, for attachments that live
+    /// outside the vault (Zotero's storage, Downloads, …).
+    private var grantedDirs: [String] = []
+
+    private func extraDirs(for vault: URL) -> [String] {
+        let root = vault.standardizedFileURL.path
+        var dirs = Set(grantedDirs)
+        for f in attachments {
+            // A folder grants itself; a file grants the folder holding it.
+            let d = (Self.isDirectory(f) ? f : f.deletingLastPathComponent())
+                .standardizedFileURL.path
+            if d != root, !d.hasPrefix(root + "/") { dirs.insert(d) }
+        }
+        return dirs.sorted()
+    }
+
+    private func needsRestartForAttachments() -> Bool {
+        let cwd = context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
+        return extraDirs(for: cwd) != grantedDirs
+    }
+
+    static func isDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    func addAttachments(_ urls: [URL]) {
+        for u in urls where !attachments.contains(u) { attachments.append(u) }
+        pushState()
+    }
+
+    private func pickFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true        // whole folders can be attached too
+        panel.allowsMultipleSelection = true
+        panel.prompt = LZ("附加")
+        guard panel.runModal() == .OK else { return }
+        addAttachments(panel.urls)
+    }
+
+    // MARK: transcript persistence
+
+    private var savedFile: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Nebula", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("chats.json")
+    }
+
+    private func loadSaved() {
+        guard let data = try? Data(contentsOf: savedFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]
+        else { return }
+        saved = obj
+    }
+
+    private func writeSaved() {
+        guard let data = try? JSONSerialization.data(withJSONObject: saved) else { return }
+        try? data.write(to: savedFile)
+    }
+
+    /// The UI sends its transcript whenever it changes; store it against the
+    /// active account together with the CLI session id so the next message can
+    /// resume the real conversation, not just show old text.
+    private func persist(items: [[String: Any]]) {
+        guard let key = accounts.active?.id.uuidString else { return }
+        saved[key] = ["items": items, "sessionID": session?.sessionID ?? saved[key]?["sessionID"] as? String ?? ""]
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.writeSaved() }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    /// Put the stored transcript back on screen and line the CLI up to resume it.
+    private func restoreTranscript() {
+        guard let key = accounts.active?.id.uuidString, let entry = saved[key],
+              let items = entry["items"] as? [[String: Any]], !items.isEmpty else { return }
+        restoredSessionID = entry["sessionID"] as? String
+        emit(["type": "nebula", "event": "restore", "items": items])
+    }
+
+    /// Session id of the restored conversation, used on the next send.
+    private var restoredSessionID: String?
 
     /// Codex model names, read from the CLI's own cache/config so the list
     /// matches whatever that account actually has (falls back to the configured
@@ -283,6 +413,51 @@ extension ChatController: WKUIDelegate {
     }
 }
 
+/// WKWebView that accepts dropped files — a Zotero paper, a PDF, a CSV — and
+/// hands their paths to the controller as chat attachments. Zotero (like
+/// Finder) can also drop file *promises*, which are received into a temp folder
+/// first.
+final class ChatDropWebView: WKWebView {
+    var onFiles: (([URL]) -> Void)?
+    private static let promiseQueue = OperationQueue()
+
+    private func fileURLs(_ pb: NSPasteboard) -> [URL] {
+        (pb.readObjects(forClasses: [NSURL.self],
+                        options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    private func accepts(_ pb: NSPasteboard) -> Bool {
+        !fileURLs(pb).isEmpty || pb.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        accepts(sender.draggingPasteboard) ? .copy : super.draggingEntered(sender)
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        accepts(sender.draggingPasteboard) ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        let urls = fileURLs(pb)
+        if !urls.isEmpty { onFiles?(urls); return true }
+        if let receivers = pb.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+           !receivers.isEmpty {
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent("np-chat-drop-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+            for r in receivers {
+                r.receivePromisedFiles(atDestination: dest, options: [:],
+                                       operationQueue: Self.promiseQueue) { [weak self] url, err in
+                    guard err == nil else { return }
+                    DispatchQueue.main.async { self?.onFiles?([url]) }
+                }
+            }
+            return true
+        }
+        return super.performDragOperation(sender)
+    }
+}
+
 /// Hosts `chat.html` from the app bundle.
 struct ChatWebView: NSViewRepresentable {
     @ObservedObject var ctrl: ChatController
@@ -292,9 +467,10 @@ struct ChatWebView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.userContentController.add(WeakHandler(ctrl), name: "nebulaChat")
         config.setURLSchemeHandler(ImageSchemeHandler(), forURLScheme: "npimg")
-        let wv = WKWebView(frame: .zero, configuration: config)
+        let wv = ChatDropWebView(frame: .zero, configuration: config)
         wv.setValue(false, forKey: "drawsBackground")
         wv.uiDelegate = ctrl
+        wv.onFiles = { [weak ctrl] urls in ctrl?.addAttachments(urls) }
         ctrl.webView = wv
         if let url = Bundle.main.url(forResource: "chat", withExtension: "html") {
             wv.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
@@ -334,10 +510,16 @@ struct ChatPane: View {
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             Divider()
-            if terminal {
-                ClaudeTermPane(vault: vault, onClose: onClose)
-            } else {
+            // Both panes stay in the hierarchy and are only hidden — swapping
+            // them with `if/else` would tear the chat's web view (and the live
+            // terminal) down and lose what's on screen.
+            ZStack {
                 ChatWebView(ctrl: ctrl)
+                    .opacity(terminal ? 0 : 1)
+                    .allowsHitTesting(!terminal)
+                ClaudeTermPane(vault: vault, onClose: onClose)
+                    .opacity(terminal ? 1 : 0)
+                    .allowsHitTesting(terminal)
             }
         }
     }
