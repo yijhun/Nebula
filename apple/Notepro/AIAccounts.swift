@@ -127,6 +127,22 @@ final class AIAccountStore: ObservableObject {
 
     func refreshAll() { accounts.map(\.id).forEach(refresh) }
 
+    /// If a CLI is installed and already signed in at its default location,
+    /// offer that login as an account — no need to sign in again inside Nebula.
+    func seedInstalledLogins() {
+        if Self.codexPath != nil,
+           FileManager.default.fileExists(atPath: "\(NSHomeDirectory())/.codex/auth.json"),
+           !accounts.contains(where: { $0.provider == .codex && $0.configDir == nil }) {
+            accounts.append(AIAccount(provider: .codex, label: "ChatGPT", loggedIn: true))
+            save()
+        }
+        if Self.claudePath != nil,
+           !accounts.contains(where: { $0.provider == .claude && $0.configDir == nil }) {
+            accounts.insert(AIAccount(provider: .claude, label: "Claude"), at: 0)
+            save()
+        }
+    }
+
     // MARK: - Add / login / remove
 
     /// Create a new isolated account and start its sign-in.

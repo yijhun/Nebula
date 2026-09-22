@@ -109,6 +109,10 @@ export function addUser(state: ChatState, text: string): ChatState {
 export function reduce(state: ChatState, ev: Json): ChatState {
   // Sub-agent traffic (nested inside a Task tool) isn't shown inline.
   if (ev.parent_tool_use_id) return state;
+  const t0 = str(ev.type);
+  if (t0.startsWith("thread.") || t0.startsWith("turn.") || t0.startsWith("item.") || t0 === "error") {
+    return reduceCodex(state, ev);
+  }
 
   switch (ev.type) {
     case "system": {
@@ -221,6 +225,81 @@ export function reduce(state: ChatState, ev: Json): ChatState {
       }
       return state;
     }
+  }
+  return state;
+}
+
+/**
+ * Codex (`codex exec --json`) speaks a different, simpler stream:
+ *   thread.started {thread_id} · turn.started
+ *   item.completed {item:{type: agent_message | reasoning | command_execution
+ *                          | file_change | error, …}}
+ *   turn.completed {usage} · turn.failed {error} · error {message}
+ * Normalised into the same transcript items as Claude's.
+ */
+function reduceCodex(state: ChatState, ev: Json): ChatState {
+  const type = str(ev.type);
+  if (type === "thread.started") { state.sessionID = str(ev.thread_id); return state; }
+  if (type === "turn.started") { state.busy = true; return state; }
+  if (type === "error") {                       // stand-alone error line
+    const msg = str(ev.message);
+    state.items.push({ kind: "notice", level: "error", text: friendlyError(msg) });
+    if (isAuthError(msg)) state.authFailed = true;
+    return state;
+  }
+
+  if (type === "item.completed" || type === "item.started") {
+    const item = obj(ev.item);
+    const kind = str(item.type);
+    if (kind === "reasoning") return state;                    // thinking isn't shown
+    const a = assistantFor(state, "codex");
+    if (kind === "agent_message") {
+      const text = str(item.text);
+      const existing = a.blocks.find((b) => b.type === "text" && b.text === text);
+      if (!existing) a.blocks.push({ type: "text", text });
+      return state;
+    }
+    if (kind === "error") {
+      state.items.push({ kind: "notice", level: "error", text: friendlyError(str(item.message)) });
+      if (isAuthError(str(item.message))) state.authFailed = true;
+      return state;
+    }
+    // Everything else becomes a tool card, mapped onto the same shape.
+    const id = str(item.id) || `${kind}-${a.blocks.length}`;
+    const done = type === "item.completed";
+    let name = kind, input: Json = {}, result: string | undefined;
+    if (kind === "command_execution") {
+      name = "Bash";
+      input = { command: str(item.command) };
+      if (done) result = str(item.aggregated_output);
+    } else if (kind === "file_change") {
+      const changes = Array.isArray(item.changes) ? item.changes.map((c) => obj(c)) : [];
+      name = "Write";
+      input = { file_path: str(changes[0]?.path), content: "" };
+      if (done) result = changes.map((c) => `${str(c.kind)} ${str(c.path)}`).join("\n");
+    } else {
+      input = item;
+      if (done) result = str(item.text) || undefined;
+    }
+    const prior = a.blocks.find((b): b is ToolBlock => b.type === "tool" && b.id === id);
+    if (prior) { prior.result = result ?? prior.result; }
+    else a.blocks.push({ type: "tool", id, name, input, inputJson: "", result });
+    return state;
+  }
+
+  if (type === "turn.completed" || type === "turn.failed") {
+    for (const it of state.items) if (it.kind === "assistant") it.streaming = false;
+    const failed = type === "turn.failed";
+    if (failed) {
+      const msg = str(obj(ev.error).message);
+      state.items.push({ kind: "notice", level: "error", text: friendlyError(msg) });
+      if (isAuthError(msg)) state.authFailed = true;
+    } else {
+      state.authFailed = false;
+    }
+    state.items.push({ kind: "done", seconds: 0, isError: failed });
+    state.busy = false;
+    return state;
   }
   return state;
 }

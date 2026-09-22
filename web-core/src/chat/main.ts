@@ -6,6 +6,7 @@
  * maths and charts in replies look exactly like they do in notes.
  */
 import { renderHtml } from "../editor/preview.js";
+import { setLang, t } from "../editor/i18n.js";
 import {
   emptyState, reduce, addUser, editView, toolSummary, shortPath,
   type ChatState, type ToolBlock, type Block,
@@ -15,8 +16,10 @@ interface Account {
   id: string; provider: "claude" | "codex"; label: string; subtitle: string;
   loggedIn: boolean; isDefault: boolean;
 }
+interface ModelOption { id: string; name: string }
 interface HostState {
   accounts: Account[]; activeID: string; mode: string; codexInstalled: boolean; vault: string;
+  model: string; models: ModelOption[]; lang: string;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -26,10 +29,12 @@ const sendBtn = $<HTMLButtonElement>("send");
 const acctBtn = $<HTMLButtonElement>("acct");
 const menu = $<HTMLDivElement>("menu");
 const modeSel = $<HTMLSelectElement>("mode");
+const modelSel = $<HTMLSelectElement>("model");
 const hint = $<HTMLDivElement>("hint");
 
 let chat: ChatState = emptyState();
-let host: HostState = { accounts: [], activeID: "", mode: "acceptEdits", codexInstalled: false, vault: "" };
+let host: HostState = { accounts: [], activeID: "", mode: "acceptEdits", codexInstalled: false,
+                        vault: "", model: "", models: [], lang: "zh" };
 let attachNote = true;
 let attachSel = false;
 
@@ -88,27 +93,29 @@ function renderDiff(pairs: Array<{ old: string; new: string }>): string {
 }
 
 // ── Blocks ──
-function renderTool(t: ToolBlock, streaming: boolean): string {
-  const ev = editView(t);
-  const pending = t.result === undefined && streaming;
+function renderTool(tool: ToolBlock, streaming: boolean): string {
+  const ev = editView(tool);
+  const pending = tool.result === undefined && streaming;
   if (ev) {
-    const status = t.reverted ? "已還原" : t.isError ? "失敗" : t.result !== undefined ? "已套用" : "進行中…";
-    const canRevert = ev.kind === "edit" && t.result !== undefined && !t.isError && !t.reverted;
+    const status = tool.reverted ? t("已還原")
+      : tool.isError ? t("失敗")
+      : tool.result !== undefined ? t("已套用") : t("進行中…");
+    const canRevert = ev.kind === "edit" && tool.result !== undefined && !tool.isError && !tool.reverted;
     const body = ev.kind === "edit"
       ? renderDiff(ev.pairs)
-      : `<div class="diff">${ev.content!.split("\n").slice(0, 40).map((l) => `<div class="add">${esc("+ " + l)}</div>`).join("")}` +
-        (ev.content!.split("\n").length > 40 ? `<div class="ctx">⋯</div>` : "") + `</div>`;
-    return `<div class="tool edit${t.reverted ? " reverted" : ""}">
+      : `<div class="diff">${(ev.content ?? "").split("\n").slice(0, 40).map((l) => `<div class="add">${esc("+ " + l)}</div>`).join("")}` +
+        ((ev.content ?? "").split("\n").length > 40 ? `<div class="ctx">⋯</div>` : "") + `</div>`;
+    return `<div class="tool edit${tool.reverted ? " reverted" : ""}">
       <div class="hd"><span>✏️</span><span class="path" title="${esc(ev.path)}">${esc(shortPath(ev.path))}</span>
-        <span class="badge">${ev.kind === "write" ? "寫入" : "修改"}</span><span class="sp"></span>
+        <span class="badge">${ev.kind === "write" ? t("寫入") : t("修改")}</span><span class="sp"></span>
         <span class="badge">${status}</span>
-        <button class="mini" data-open="${esc(ev.path)}">開啟</button>
-        ${canRevert ? `<button class="mini" data-revert="${esc(t.id)}">還原</button>` : ""}
+        <button class="mini" data-open="${esc(ev.path)}">${t("開啟")}</button>
+        ${canRevert ? `<button class="mini" data-revert="${esc(tool.id)}">${t("還原")}</button>` : ""}
       </div>${body}</div>`;
   }
-  const status = pending ? "…" : t.isError ? "⚠︎" : "✓";
-  const out = t.result ? `<pre class="out">${esc(t.result.slice(0, 4000))}</pre>` : "";
-  return `<details class="tool"><summary><span>▸</span>${esc(toolSummary(t))}<span class="st">${status}</span></summary>${out}</details>`;
+  const status = pending ? "…" : tool.isError ? "⚠︎" : "✓";
+  const out = tool.result ? `<pre class="out">${esc(tool.result.slice(0, 4000))}</pre>` : "";
+  return `<details class="tool"><summary><span>▸</span>${esc(toolSummary(tool))}<span class="st">${status}</span></summary>${out}</details>`;
 }
 
 function renderBlocks(blocks: Block[], streaming: boolean): string {
@@ -141,15 +148,15 @@ function render(): void {
     if (!chat.items.length) {
       const a = activeAccount();
       log.innerHTML = `<div class="empty"><b>${a ? esc(a.label) : "Claude"}</b><br>
-        在「${esc(host.vault || "你的 vault")}」裡對話 — 可以問問題、整理筆記、改寫段落。<br>
-        預設會附上目前開啟的筆記。</div>`;
+        ${t("在「")}${esc(host.vault || t("你的 vault"))}${t("」裡對話 — 可以問問題、整理筆記、改寫段落。")}<br>
+        ${t("預設會附上目前開啟的筆記。")}</div>`;
     } else {
       log.innerHTML = chat.items.map((it) => {
         switch (it.kind) {
           case "user": return `<div class="msg user">${esc(it.text)}</div>`;
           case "assistant": return `<div class="msg asst">${renderBlocks(it.blocks, it.streaming)}</div>`;
           case "notice": return `<div class="msg notice ${it.level}">${esc(it.text)}</div>`;
-          case "done": return it.seconds > 0 ? `<div class="done">${it.seconds.toFixed(1)} 秒</div>` : "";
+          case "done": return it.seconds > 0 ? `<div class="done">${it.seconds.toFixed(1)}s</div>` : "";
         }
       }).join("");
     }
@@ -191,11 +198,11 @@ function signedIn(a: Account | undefined): boolean {
 
 function updateComposer(): void {
   const a = activeAccount();
-  sendBtn.textContent = chat.busy ? "停止" : "送出";
+  sendBtn.textContent = chat.busy ? t("停止") : t("送出");
   sendBtn.classList.toggle("stop", chat.busy);
   sendBtn.disabled = !chat.busy && !input.value.trim();
   hint.textContent = a && !signedIn(a)
-    ? (chat.authFailed ? "⚠︎ 登入已過期 — 點上方帳號名稱 → 登入" : "⚠︎ 這個帳號尚未登入 — 點上方帳號名稱 → 登入")
+    ? (chat.authFailed ? t("⚠︎ 登入已過期 — 點上方帳號名稱 → 登入") : t("⚠︎ 這個帳號尚未登入 — 點上方帳號名稱 → 登入"))
     : chat.model ? `模型：${chat.model.replace(/\[.*\]$/, "")}` : "";
   renderAccountButton();
 }
@@ -247,7 +254,7 @@ function renderAccountButton(): void {
   acctBtn.innerHTML = a
     ? `<span class="dot${ok ? " on" : ""}"></span>
        <span class="acct-text"><div class="acct-name">${esc(a.label)}</div>
-       <div class="acct-sub">${esc(chat.authFailed ? "登入已過期" : a.subtitle || (a.loggedIn ? "" : "未登入"))}</div></span>
+       <div class="acct-sub">${esc(chat.authFailed ? t("登入已過期") : a.subtitle || (a.loggedIn ? "" : t("未登入")))}</div></span>
        <span class="badge">${a.provider === "claude" ? "Claude" : "ChatGPT"}</span><span>▾</span>`
     : "帳號";
 }
@@ -257,16 +264,16 @@ function renderMenu(): void {
     <div class="mrow pick${a.id === host.activeID ? " active" : ""}" data-pick="${a.id}">
       <span class="dot${a.loggedIn ? " on" : ""}"></span>
       <div class="grow"><div class="acct-name">${esc(a.label)}</div>
-        <div class="acct-sub">${esc(a.subtitle || (a.loggedIn ? "" : "未登入"))}</div></div>
+        <div class="acct-sub">${esc(a.subtitle || (a.loggedIn ? "" : t("未登入")))}</div></div>
       <span class="badge">${a.provider === "claude" ? "Claude" : "ChatGPT"}</span>
-      <button class="mini" data-login="${a.id}">登入</button>
-      ${a.isDefault ? "" : `<button class="mini" data-remove="${a.id}">移除</button>`}
+      <button class="mini" data-login="${a.id}">${t("登入")}</button>
+      ${a.isDefault ? "" : `<button class="mini" data-remove="${a.id}">${t("移除")}</button>`}
     </div>`).join("");
   menu.innerHTML = rows + `<div class="msep"></div>
-    <div class="mrow pick" data-add="claude">＋ 新增 Claude 帳號</div>
-    <div class="mrow pick" data-add="codex">＋ 新增 ChatGPT 帳號${host.codexInstalled ? "" : "（需先安裝 Codex CLI）"}</div>
-    <div class="mrow pick" data-refresh="1">↻ 重新整理登入狀態</div>
-    <div class="mhint">每個帳號是獨立的登入；切換帳號會開始新對話。</div>`;
+    <div class="mrow pick" data-add="claude">${t("＋ 新增 Claude 帳號")}</div>
+    <div class="mrow pick" data-add="codex">${t("＋ 新增 ChatGPT 帳號")}${host.codexInstalled ? "" : t("（需先安裝 Codex CLI）")}</div>
+    <div class="mrow pick" data-refresh="1">${t("↻ 重新整理登入狀態")}</div>
+    <div class="mhint">${t("每個帳號是獨立的登入；切換帳號會開始新對話。")}</div>`;
 }
 
 acctBtn.addEventListener("click", (e) => {
@@ -294,7 +301,7 @@ menu.addEventListener("click", (e) => {
     if (row.dataset.pick !== host.activeID) post({ type: "switchAccount", id: row.dataset.pick });
     menu.classList.remove("open");
   } else if (row.dataset.add) {
-    const name = prompt(row.dataset.add === "claude" ? "新 Claude 帳號的名稱（例如：研究室 Max）" : "新 ChatGPT 帳號的名稱", "");
+    const name = prompt(row.dataset.add === "claude" ? t("新 Claude 帳號的名稱（例如：研究室 Max）") : t("新 ChatGPT 帳號的名稱"), "");
     if (name !== null) post({ type: "addAccount", provider: row.dataset.add, label: name.trim() });
     menu.classList.remove("open");
   } else if (row.dataset.refresh) {
@@ -314,14 +321,41 @@ menu.addEventListener("click", (e) => {
   },
   setState(json: string): void {
     try { host = JSON.parse(json) as HostState; } catch { return; }
+    setLang(host.lang === "en" ? "en" : "zh");
+    applyLang();
     modeSel.value = host.mode;
+    renderModels();
     renderAccountButton();
     if (menu.classList.contains("open")) renderMenu();
     render();
   },
 };
 
+/** Re-label everything that isn't re-rendered from state. */
+function applyLang(): void {
+  acctBtn.title = t("切換帳號");
+  modeSel.title = t("Claude 能做的事");
+  modeSel.options[0]!.text = t("可改筆記");
+  modeSel.options[1]!.text = t("唯讀");
+  modelSel.title = t("模型");
+  $("new").textContent = t("新對話");
+  $("attNote").textContent = t("＋ 目前筆記");
+  $("attSel").textContent = t("＋ 選取內容");
+  input.placeholder = t("問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）");
+  updateComposer();
+}
+
+function renderModels(): void {
+  const opts = host.models.length ? host.models : [{ id: "", name: "預設" }];
+  modelSel.innerHTML = opts
+    .map((m) => `<option value="${esc(m.id)}">${esc(m.id ? m.name : t("預設"))}</option>`).join("");
+  modelSel.value = host.model;
+}
+modelSel.addEventListener("change", () => post({ type: "setModel", model: modelSel.value }));
+
 syncChips();
+applyLang();
+renderModels();
 renderAccountButton();
 render();
 post({ type: "ready" });

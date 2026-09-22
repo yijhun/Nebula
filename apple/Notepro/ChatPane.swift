@@ -17,6 +17,9 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
 
     private var session: AgentSession?
     private var mode: AgentSession.Mode = .edit
+    /// "" = the CLI's default model.
+    private var model = ""
+
     private let accounts = AIAccountStore.shared
     private var ready = false
 
@@ -27,6 +30,7 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         switch type {
         case "ready":
             ready = true
+            accounts.seedInstalledLogins()
             accounts.refreshAll()
             pushState()
             // Status checks are async — push again once they've landed.
@@ -42,6 +46,10 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             emit(["type": "nebula", "event": "cleared"])
         case "setMode":
             mode = (body["mode"] as? String) == "plan" ? .readOnly : .edit
+            if session != nil { restart(resume: true) }
+            pushState()
+        case "setModel":
+            model = body["model"] as? String ?? ""
             if session != nil { restart(resume: true) }
             pushState()
         case "switchAccount":
@@ -100,7 +108,8 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         session = nil
         guard let acct = accounts.active else { return false }
         let cwd = context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
-        let s = AgentSession(account: acct, cwd: cwd, mode: mode, resumeID: resumeID)
+        let s = AgentSession(account: acct, cwd: cwd, mode: mode,
+                             model: model.isEmpty ? nil : model, resumeID: resumeID)
         s.onLine = { [weak self] line in self?.forward(line) }
         s.onExit = { [weak self] code, err in
             guard let self, self.session === s else { return }
@@ -195,12 +204,43 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             "accounts": list,
             "activeID": accounts.active?.id.uuidString ?? "",
             "mode": mode == .readOnly ? "plan" : "acceptEdits",
+            "model": model,
+            "models": Self.models(for: accounts.active?.provider ?? .claude),
             "codexInstalled": AIAccountStore.codexPath != nil,
             "vault": context().vault?.lastPathComponent ?? "",
+            "lang": currentlyEnglish() ? "en" : "zh",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: state),
               let s = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.nebulaChat && window.nebulaChat.setState(\(Self.js(s)))")
+    }
+
+    /// Codex model names, read from the CLI's own cache/config so the list
+    /// matches whatever that account actually has (falls back to the configured
+    /// model alone). Refreshed lazily; cheap file reads.
+    private static var codexModels: [String] {
+        let home = "\(NSHomeDirectory())/.codex"
+        var found = Set<String>()
+        let fm = FileManager.default
+        if let items = try? fm.contentsOfDirectory(atPath: home) {
+            for f in items where f.hasSuffix(".json") || f.hasSuffix(".toml") {
+                guard let text = try? String(contentsOfFile: "\(home)/\(f)", encoding: .utf8) else { continue }
+                let re = try? NSRegularExpression(pattern: #""(gpt-[0-9][A-Za-z0-9._-]{0,24})""#)
+                let ns = text as NSString
+                re?.matches(in: text, range: NSRange(location: 0, length: ns.length)).forEach {
+                    found.insert(ns.substring(with: $0.range(at: 1)))
+                }
+            }
+        }
+        return found.sorted()
+    }
+
+    /// Models offered in the picker (empty id = the CLI's own default).
+    private static func models(for p: AIAccount.Provider) -> [[String: String]] {
+        p == .claude
+            ? [["id": "", "name": ""], ["id": "opus", "name": "Opus"],
+               ["id": "sonnet", "name": "Sonnet"], ["id": "haiku", "name": "Haiku"]]
+            : [["id": "", "name": ""]] + codexModels.map { ["id": $0, "name": $0] }
     }
 
     /// A JSON string as a JS string literal.

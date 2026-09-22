@@ -1,25 +1,28 @@
 import Foundation
 
 /// A live conversation with a subscription CLI, driven through its structured
-/// streaming interface (the same one editor extensions use):
+/// streaming interface (the same one editor extensions use). Both providers
+/// emit one JSON object per line, which is forwarded untouched to the chat UI;
+/// Swift only owns the processes.
 ///
-///   claude -p --input-format stream-json --output-format stream-json …
-///
-/// One long-lived process holds the whole conversation; each user turn is one
-/// JSON line on stdin, and every event (text deltas, tool calls, results) comes
-/// back as one JSON line on stdout — forwarded untouched to the chat UI, which
-/// does the rendering. Swift only owns the process.
+///   Claude Code — one long-lived process for the whole conversation:
+///     claude -p --input-format stream-json --output-format stream-json …
+///   Codex — one process per turn, threaded with `resume`:
+///     codex exec --json …            (first turn)
+///     codex exec resume <thread> …   (later turns)
 final class AgentSession {
-    enum Mode: String { case readOnly = "plan", edit = "acceptEdits" }
+    enum Mode: String { case readOnly, edit }
 
     let account: AIAccount
     let cwd: URL
     let mode: Mode
-    /// Continue an earlier conversation (e.g. after Stop or a mode change).
+    let model: String?          // nil = the CLI's default
+    /// Continue an earlier conversation (after Stop, or a mode/model change).
     let resumeID: String?
 
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
+    /// Claude: the -p session id. Codex: the thread id. Both resume with it.
     private(set) var sessionID: String?
 
     private var process: Process?
@@ -27,30 +30,84 @@ final class AgentSession {
     private var buffer = Data()
     private let errTail = PipeTail()
 
-    init(account: AIAccount, cwd: URL, mode: Mode, resumeID: String? = nil) {
-        self.account = account; self.cwd = cwd; self.mode = mode; self.resumeID = resumeID
+    init(account: AIAccount, cwd: URL, mode: Mode, model: String?, resumeID: String? = nil) {
+        self.account = account; self.cwd = cwd; self.mode = mode
+        self.model = model; self.resumeID = resumeID
+        self.sessionID = account.provider == .codex ? resumeID : nil
     }
 
     var isRunning: Bool { process?.isRunning == true }
 
-    /// Start the CLI. Returns a user-facing error, or nil.
-    func start() -> String? {
-        guard account.provider == .claude else {
-            return "ChatGPT（Codex）對話尚未接上 — 需先安裝 Codex CLI"
-        }
-        guard let exe = AIAccountStore.claudePath else {
-            return "找不到 claude CLI（npm install -g @anthropic-ai/claude-code）"
-        }
-        var args = ["-p",
-                    "--input-format", "stream-json",
-                    "--output-format", "stream-json",
-                    "--verbose",
-                    "--include-partial-messages",
-                    "--permission-mode", mode.rawValue,
-                    "--append-system-prompt",
-                    "You are running inside Nebula, a Markdown/LaTeX research-notes app; the working directory is the user's notes vault. Reply in the user's language. Write math as $…$ / $$…$$."]
-        if let r = resumeID { args += ["--resume", r] }
+    /// Claude keeps one process for the conversation; Codex starts one per turn.
+    private var persistent: Bool { account.provider == .claude }
 
+    /// Prepare the session. Returns a user-facing error, or nil.
+    func start() -> String? {
+        guard AIAccountStore.cliPath(account.provider) != nil else {
+            return account.provider == .claude
+                ? "找不到 claude CLI（npm install -g @anthropic-ai/claude-code）"
+                : "找不到 codex CLI（npm install -g @openai/codex）"
+        }
+        return persistent ? spawn(claudeArgs()) : nil   // Codex spawns on send
+    }
+
+    /// Send one user turn.
+    func send(_ text: String) {
+        if persistent {
+            if !isRunning, let err = spawn(claudeArgs()) {
+                emitError(err); return
+            }
+            let msg: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
+            guard let data = try? JSONSerialization.data(withJSONObject: msg), let stdin else { return }
+            stdin.write(data); stdin.write(Data("\n".utf8))
+        } else {
+            if isRunning { process?.terminate() }
+            if let err = spawn(codexArgs(prompt: text)) { emitError(err) }
+        }
+    }
+
+    /// Stop generating. Claude can be resumed from `sessionID`; Codex's next
+    /// turn resumes the thread anyway.
+    func stop() {
+        guard let p = process, p.isRunning else { return }
+        p.interrupt()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { if p.isRunning { p.terminate() } }
+    }
+
+    // MARK: - argv
+
+    private func claudeArgs() -> [String] {
+        var a = ["-p",
+                 "--input-format", "stream-json",
+                 "--output-format", "stream-json",
+                 "--verbose",
+                 "--include-partial-messages",
+                 "--permission-mode", mode == .readOnly ? "plan" : "acceptEdits",
+                 "--append-system-prompt", Self.systemNote]
+        if let m = model, !m.isEmpty { a += ["--model", m] }
+        if let r = resumeID { a += ["--resume", r] }
+        return a
+    }
+
+    private func codexArgs(prompt: String) -> [String] {
+        var a = ["exec"]
+        if let t = sessionID, !t.isEmpty { a += ["resume", t] }
+        a += ["--json",
+              "--skip-git-repo-check",              // a vault usually isn't a git repo
+              "-s", mode == .readOnly ? "read-only" : "workspace-write",
+              "-C", cwd.path]
+        if let m = model, !m.isEmpty { a += ["-m", m] }
+        a += ["\(Self.systemNote)\n\n\(prompt)"]
+        return a
+    }
+
+    private static let systemNote =
+        "You are running inside Nebula, a Markdown/LaTeX research-notes app; the working directory is the user's notes vault. Reply in the user's language. Write math as $…$ / $$…$$."
+
+    // MARK: - process
+
+    private func spawn(_ args: [String]) -> String? {
+        guard let exe = AIAccountStore.cliPath(account.provider) else { return "找不到 CLI" }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = args
@@ -76,25 +133,18 @@ final class AgentSession {
         do { try p.run() } catch { return "無法啟動：\(error.localizedDescription)" }
         process = p
         stdin = inPipe.fileHandleForWriting
+        // Codex reads extra prompt text from stdin when it isn't a TTY and
+        // blocks forever waiting for EOF — close it right away.
+        if !persistent { try? inPipe.fileHandleForWriting.close() }
         return nil
     }
 
-    /// Send one user turn.
-    func send(_ text: String) {
-        let msg: [String: Any] = ["type": "user",
-                                  "message": ["role": "user", "content": text]]
-        guard let data = try? JSONSerialization.data(withJSONObject: msg),
-              let stdin else { return }
-        stdin.write(data)
-        stdin.write(Data("\n".utf8))
-    }
-
-    /// Stop generating. The CLI exits; reopening with `--resume sessionID`
-    /// keeps the conversation.
-    func stop() {
-        guard let p = process, p.isRunning else { return }
-        p.interrupt()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { if p.isRunning { p.terminate() } }
+    private func emitError(_ text: String) {
+        let obj: [String: Any] = ["type": "nebula", "event": "notice", "text": text]
+        if let d = try? JSONSerialization.data(withJSONObject: obj),
+           let s = String(data: d, encoding: .utf8) {
+            DispatchQueue.main.async { [weak self] in self?.onLine?(s) }
+        }
     }
 
     // MARK: - line splitting
@@ -106,10 +156,12 @@ final class AgentSession {
             buffer.removeSubrange(buffer.startIndex...nl)
             guard let line = String(data: lineData, encoding: .utf8),
                   !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-            if sessionID == nil, line.contains("\"session_id\""),
-               let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-               let sid = obj["session_id"] as? String {
-                sessionID = sid
+            if sessionID == nil,
+               let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] {
+                // Claude: session_id on every event. Codex: thread.started.
+                if let sid = obj["session_id"] as? String { sessionID = sid }
+                else if obj["type"] as? String == "thread.started",
+                        let tid = obj["thread_id"] as? String { sessionID = tid }
             }
             DispatchQueue.main.async { [weak self] in self?.onLine?(line) }
         }

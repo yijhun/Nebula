@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyState, reduce, addUser, editView, toolSummary, friendlyError, type ChatState } from "../events.js";
+import { emptyState, reduce, addUser, editView, toolSummary, friendlyError, type ChatState, type ToolBlock } from "../events.js";
 
 const feed = (s: ChatState, evs: Record<string, unknown>[]) => { evs.forEach((e) => reduce(s, e)); return s; };
 const se = (event: Record<string, unknown>) => ({ type: "stream_event", event });
@@ -101,6 +101,54 @@ describe("chat event reducer", () => {
     const a = s.items[1]!;
     if (a.kind !== "assistant" || a.blocks[0]!.type !== "tool") throw new Error();
     expect(a.blocks[0]!.reverted).toBe(true);
+  });
+});
+
+describe("codex (ChatGPT) events", () => {
+  it("normalises a real success turn into the same transcript", () => {
+    // Recorded from `codex exec --json` (run against a local provider).
+    const s = addUser(emptyState(), "Say OK");
+    feed(s, [
+      { type: "thread.started", thread_id: "01a0c74f-75dc-7d02" },
+      { type: "turn.started" },
+      { type: "item.completed", item: { id: "item_1", type: "reasoning", text: "thinking…" } },
+      { type: "item.completed", item: { id: "item_2", type: "agent_message", text: "OK, how can I assist you today?" } },
+      { type: "turn.completed", usage: { input_tokens: 16386, output_tokens: 153 } },
+    ]);
+    expect(s.sessionID).toBe("01a0c74f-75dc-7d02");
+    expect(s.busy).toBe(false);
+    const a = s.items[1]!;
+    if (a.kind !== "assistant") throw new Error("no assistant");
+    expect(a.blocks).toEqual([{ type: "text", text: "OK, how can I assist you today?" }]);  // reasoning hidden
+  });
+
+  it("maps commands and file changes onto tool cards", () => {
+    const s = addUser(emptyState(), "run it");
+    feed(s, [
+      { type: "thread.started", thread_id: "t" },
+      { type: "item.completed", item: { id: "c1", type: "command_execution", command: "ls", aggregated_output: "a.md" } },
+      { type: "item.completed", item: { id: "f1", type: "file_change", changes: [{ path: "notes/a.md", kind: "modify" }] } },
+    ]);
+    const a = s.items[1]!;
+    if (a.kind !== "assistant") throw new Error();
+    const [cmd, file] = a.blocks as [ToolBlock, ToolBlock];
+    expect(cmd.name).toBe("Bash");
+    expect(toolSummary(cmd)).toBe("執行 ls");
+    expect(cmd.result).toBe("a.md");
+    expect(editView(file)!.path).toBe("notes/a.md");
+  });
+
+  it("surfaces the usage-limit error the way the CLI reports it", () => {
+    const s = addUser(emptyState(), "q");
+    feed(s, [
+      { type: "thread.started", thread_id: "t" },
+      { type: "error", message: "You’ve hit your usage limit. Upgrade to Pro…" },
+      { type: "turn.failed", error: { message: "You’ve hit your usage limit. Upgrade to Pro…" } },
+    ]);
+    const notices = s.items.filter((i) => i.kind === "notice");
+    expect(notices.length).toBeGreaterThan(0);
+    expect(notices[0]!.kind === "notice" && notices[0]!.text).toMatch(/上限/);
+    expect(s.busy).toBe(false);
   });
 });
 
