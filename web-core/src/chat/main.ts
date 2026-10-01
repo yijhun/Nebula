@@ -256,7 +256,11 @@ $("files").addEventListener("click", (e) => {
   const p = (e.target as HTMLElement).getAttribute("data-unattach");
   if (p) post({ type: "removeAttachment", path: p });
 });
+// Separate buttons: one NSOpenPanel that takes both makes double-clicking a
+// folder walk into it instead of picking it, which reads as "folders aren't
+// supported".
 $("attFile").addEventListener("click", () => post({ type: "addFiles" }));
+$("attDir").addEventListener("click", () => post({ type: "addFiles", dirs: true }));
 
 function syncChips(): void {
   $("attNote").classList.toggle("on", attachNote);
@@ -368,6 +372,7 @@ function applyLang(): void {
   $("attNote").textContent = t("＋ 目前筆記");
   $("attSel").textContent = t("＋ 選取內容");
   $("attFile").textContent = t("＋ 檔案");
+  $("attDir").textContent = t("＋ 資料夾");
   $("drop").textContent = t("放開以附加檔案");
   input.placeholder = t("問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）");
   updateComposer();

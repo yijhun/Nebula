@@ -103,7 +103,7 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         case "removeAttachment":
             if let p = body["path"] as? String { attachments.removeAll { $0.path == p }; pushState() }
         case "addFiles":
-            pickFiles()
+            pickFiles(dirs: body["dirs"] as? Bool ?? false)
         case "openFile":
             if let path = body["path"] as? String { openInEditor(path) }
         case "revertEdit":
@@ -291,12 +291,16 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         pushState()
     }
 
-    private func pickFiles() {
+    /// One panel per kind. Offering files and folders in the same panel makes
+    /// double-clicking a folder navigate into it rather than choose it, so
+    /// folders looked unsupported even though they were not.
+    private func pickFiles(dirs: Bool) {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true        // whole folders can be attached too
+        panel.canChooseFiles = !dirs
+        panel.canChooseDirectories = dirs
         panel.allowsMultipleSelection = true
         panel.prompt = LZ("附加")
+        if dirs { panel.message = LZ("選擇資料夾") }
         guard panel.runModal() == .OK else { return }
         addAttachments(panel.urls)
     }

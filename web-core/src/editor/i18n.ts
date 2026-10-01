@@ -58,7 +58,8 @@ const EN: Record<string, string> = {
   "修改": "edit", "寫入": "write", "開啟": "Open", "還原": "Revert",
   "新 Claude 帳號的名稱（例如：研究室 Max）": "Name for the new Claude account (e.g. Lab Max)",
   "新 ChatGPT 帳號的名稱": "Name for the new ChatGPT account",
-  "＋ 檔案": "＋ Files", "放開以附加檔案": "Drop to attach", "附加": "Attach",
+  "＋ 檔案": "＋ Files", "＋ 資料夾": "＋ Folder",
+  "放開以附加檔案": "Drop to attach", "附加": "Attach", "選擇資料夾": "Choose folder",
   "找不到結果": "No results",
   // Slash menu
   "/ 標題 H1": "/ Heading 1",

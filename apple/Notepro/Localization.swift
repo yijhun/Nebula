@@ -129,7 +129,7 @@ let EN: [String: String] = [
     "在 Zotero 開 PDF": "Open PDF in Zotero",
     "貼上為圖片 Paste as Image": "Paste as Image",
     "用 Claude Code 開啟 vault": "Open Vault in Claude Code",
-    "對話": "Chat", "附加": "Attach",
+    "對話": "Chat", "附加": "Attach", "選擇資料夾": "Choose folder",
     "AI 對話面板": "AI Chat Panel",
     "終端": "Terminal",
     "關閉側欄（對話保留）": "Close pane (conversation kept)",

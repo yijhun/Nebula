@@ -70,28 +70,42 @@ enum ZoteroService {
     static func search(_ query: String, completion: @escaping ([ZoteroItem]) -> Void) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard enabled, !q.isEmpty else { DispatchQueue.main.async { completion([]) }; return }
-        rpc("item.search", [q]) { result in
-            switch result {
-            case .success(let r):
-                var items: [ZoteroItem] = []
-                if let arr = r as? [[String: Any]] {
-                    for it in arr {
-                        let ck = (it["citekey"] as? String) ?? (it["citation-key"] as? String) ?? ""
-                        guard !ck.isEmpty else { continue }
-                        items.append(ZoteroItem(
-                            citekey: ck,
-                            title: it["title"] as? String ?? ck,
-                            authors: authorString(it["author"]),
-                            year: yearString(it["issued"])
-                        ))
-                    }
-                }
-                DispatchQueue.main.async { completion(items) }
-            case .failure:
-                // Zotero not running → try the cloud API.
-                if ZoteroWeb.available { ZoteroWeb.search(q, completion: completion) }
-                else { DispatchQueue.main.async { completion([]) } }
+        let finish = { (items: [ZoteroItem]) in DispatchQueue.main.async { completion(items) } }
+        // Title / creator / year — the mode Zotero's own search bar starts in.
+        searchLocal(q, mode: "quicksearch-titleCreatorYear") { hits in
+            if let hits, !hits.isEmpty { finish(hits); return }
+            // Nothing there: the words are probably in an abstract or the
+            // attached PDF, so widen the net before giving up.
+            searchLocal(q, mode: "quicksearch-everything") { wide in
+                if let wide { finish(wide) }
+                else if hits != nil { finish([]) }              // Zotero answered, just no match
+                else if ZoteroWeb.available { ZoteroWeb.search(q, completion: completion) }
+                else { finish([]) }                             // Zotero closed, no cloud key
             }
+        }
+    }
+
+    /// One local Better BibTeX search. `nil` means Zotero was unreachable or
+    /// refused the query — an empty array means it answered with no matches.
+    ///
+    /// The query has to go over as a structured condition. Passing it as a bare
+    /// string makes Better BibTeX build a grouped search that current Zotero
+    /// rejects ("Invalid condition 'blockStart'"), and the error surfaced as an
+    /// empty result list — the citation picker simply found no papers, ever.
+    private static func searchLocal(_ q: String, mode: String,
+                                    _ completion: @escaping ([ZoteroItem]?) -> Void) {
+        rpc("item.search", [[[mode, "contains", q]]]) { result in
+            guard case .success(let r) = result, let arr = r as? [[String: Any]] else {
+                completion(nil); return
+            }
+            completion(arr.compactMap { it in
+                let ck = (it["citekey"] as? String) ?? (it["citation-key"] as? String) ?? ""
+                guard !ck.isEmpty else { return nil }
+                return ZoteroItem(citekey: ck,
+                                  title: it["title"] as? String ?? ck,
+                                  authors: authorString(it["author"]),
+                                  year: yearString(it["issued"]))
+            })
         }
     }
 
