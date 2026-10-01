@@ -15,6 +15,8 @@ const TECTONIC = ["/opt/homebrew/bin/tectonic", "/usr/local/bin/tectonic"]
   .find((p) => existsSync(p));
 if (!TECTONIC) { console.error("tectonic not found — skipping e2e"); process.exit(0); }
 
+const OFFLINE = "http://127.0.0.1:1";
+
 const BIB = `@article{balbus1991, title={A powerful local shear instability}, author={Balbus, S. and Hawley, J.}, journal={ApJ}, year={1991}, volume={376}, pages={214}}
 @article{ulrich1976, title={An infall model}, author={Ulrich, R.}, journal={ApJ}, year={1976}, volume={210}, pages={377}}
 `;
@@ -56,7 +58,15 @@ rmSync(base, { recursive: true, force: true });
 
 function compile(dir: string, stem: string): string | null {
   try {
-    execFileSync(TECTONIC!, [`${stem}.tex`], { cwd: dir, stdio: "pipe" });
+    // Cache-only, with HTTP pointed at a closed port. Tectonic contacts its
+    // bundle server on every run, and when that host is unreachable each case
+    // pays the full connect timeout (~30s, or minutes with pgfplots) before
+    // typesetting starts. The suite's packages are all cached. See the same
+    // treatment in PDFExporter.runTectonicOnce.
+    execFileSync(TECTONIC!, ["--only-cached", `${stem}.tex`], {
+      cwd: dir, stdio: "pipe",
+      env: { ...process.env, http_proxy: OFFLINE, https_proxy: OFFLINE, ALL_PROXY: OFFLINE, NO_PROXY: "" },
+    });
     return existsSync(`${dir}/${stem}.pdf`) ? null : "no PDF produced";
   } catch (e: any) {
     const log = (e.stderr?.toString() || e.message || "").split("\n").filter((l: string) => /error:/i.test(l)).slice(0, 3).join(" | ");

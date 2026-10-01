@@ -18,9 +18,12 @@ final class TikzRenderer {
     private var waiting: [String: [(String?) -> Void]] = [:]   // hash → callbacks
     private let lock = NSLock()
 
+    /// Application Support, not the temp dir: macOS prunes temporary files, and
+    /// a diagram that has been in a note for weeks should not recompile just
+    /// because the machine rebooted.
     private var cacheDir: URL {
-        let d = FileManager.default.temporaryDirectory
-            .appendingPathComponent("nebula-tikz", isDirectory: true)
+        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Nebula/tikz", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }

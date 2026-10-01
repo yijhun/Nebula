@@ -97,16 +97,49 @@ enum PDFExporter {
     /// subsequent recompiles in the same dir are much faster.
     private static func runTectonic(in dir: URL, texName: String, stem: String,
                                     quick: Bool = false) -> Result<URL, Error> {
+        let offline = runTectonicOnce(in: dir, texName: texName, stem: stem,
+                                      quick: quick, offline: true)
+        if case .success = offline { return offline }
+        // Only a resource that isn't cached yet is worth the networked retry —
+        // a plain TeX mistake would just pay the stall to fail again.
+        guard case .failure(let error) = offline,
+              case ExportError.compileFailed(let log) = error,
+              log.range(of: "not found", options: .caseInsensitive) != nil
+        else { return offline }
+        return runTectonicOnce(in: dir, texName: texName, stem: stem,
+                               quick: quick, offline: false)
+    }
+
+    /// Tectonic reaches for its bundle server on every run — even under
+    /// `--only-cached` — and when that host doesn't answer, the full connect
+    /// timeout is paid before any typesetting starts. Measured on an
+    /// unreachable server: 30s for a trivial document and ~2min for one using
+    /// pgfplots, both at ~0% CPU. Everything a note needs is already in the
+    /// local cache, so the first attempt runs cache-only with HTTP routed to a
+    /// closed port, which makes the reach-out fail instantly instead of
+    /// hanging; the same pgfplots document then compiles in ~0.4s.
+    private static func runTectonicOnce(in dir: URL, texName: String, stem: String,
+                                        quick: Bool, offline: Bool) -> Result<URL, Error> {
         guard let tectonic = findTectonic() else { return .failure(ExportError.tectonicNotFound) }
         do {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tectonic)
+            if offline {
+                var env = ProcessInfo.processInfo.environment
+                for key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+                    env[key] = "http://127.0.0.1:1"
+                }
+                env["NO_PROXY"] = ""        // don't let an inherited allowlist re-open the door
+                process.environment = env
+            }
             // --synctex produces <stem>.synctex.gz alongside the PDF, used by
             // the SyncTeX helper to map editor lines ⇄ PDF coords. Cheap (~5%
             // overhead) and harmless when SyncTeX isn't installed.
-            process.arguments = quick
+            var args = quick
                 ? ["--reruns", "0", "--keep-intermediates", "--synctex", texName]
                 : ["--synctex", texName]
+            if offline { args.insert("--only-cached", at: 0) }
+            process.arguments = args
             process.currentDirectoryURL = dir
             let pipe = Pipe()
             process.standardOutput = pipe
