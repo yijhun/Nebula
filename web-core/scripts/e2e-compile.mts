@@ -16,6 +16,9 @@ const TECTONIC = ["/opt/homebrew/bin/tectonic", "/usr/local/bin/tectonic"]
 if (!TECTONIC) { console.error("tectonic not found — skipping e2e"); process.exit(0); }
 
 const OFFLINE = "http://127.0.0.1:1";
+// E2E_ONLINE=1 lets Tectonic download what it lacks (CI does this when its
+// Tectonic cache is cold). Default stays cache-only, see compile().
+const ONLINE = process.env.E2E_ONLINE === "1";
 
 const BIB = `@article{balbus1991, title={A powerful local shear instability}, author={Balbus, S. and Hawley, J.}, journal={ApJ}, year={1991}, volume={376}, pages={214}}
 @article{ulrich1976, title={An infall model}, author={Ulrich, R.}, journal={ApJ}, year={1976}, volume={210}, pages={377}}
@@ -63,9 +66,10 @@ function compile(dir: string, stem: string): string | null {
     // pays the full connect timeout (~30s, or minutes with pgfplots) before
     // typesetting starts. The suite's packages are all cached. See the same
     // treatment in PDFExporter.runTectonicOnce.
-    execFileSync(TECTONIC!, ["--only-cached", `${stem}.tex`], {
+    execFileSync(TECTONIC!, ONLINE ? [`${stem}.tex`] : ["--only-cached", `${stem}.tex`], {
       cwd: dir, stdio: "pipe",
-      env: { ...process.env, http_proxy: OFFLINE, https_proxy: OFFLINE, ALL_PROXY: OFFLINE, NO_PROXY: "" },
+      env: ONLINE ? process.env
+        : { ...process.env, http_proxy: OFFLINE, https_proxy: OFFLINE, ALL_PROXY: OFFLINE, NO_PROXY: "" },
     });
     return existsSync(`${dir}/${stem}.pdf`) ? null : "no PDF produced";
   } catch (e: any) {
