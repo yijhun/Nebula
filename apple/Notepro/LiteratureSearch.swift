@@ -36,6 +36,18 @@ enum LiteratureSearch {
         }.resume()
     }
 
+    /// One paper by its arXiv id (e.g. "2101.01234").
+    static func arxivByID(_ id: String, completion: @escaping (Paper?) -> Void) {
+        let clean = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
+        guard let url = URL(string: "https://export.arxiv.org/api/query?id_list=\(clean)") else {
+            return DispatchQueue.main.async { completion(nil) }
+        }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            let paper = data.map { ArxivParser($0).parse() }?.first
+            DispatchQueue.main.async { completion(paper) }
+        }.resume()
+    }
+
     // MARK: NASA ADS (Bearer token)
 
     static func ads(_ query: String, completion: @escaping (Result<[Paper], Error>) -> Void) {

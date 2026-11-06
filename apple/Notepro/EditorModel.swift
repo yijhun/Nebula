@@ -73,6 +73,28 @@ final class EditorModel: ObservableObject, Identifiable {
     /// Unsaved-changes indicator (dot on the tab chip). Set on edit, cleared
     /// on save / open.
     @Published var isDirty: Bool = false
+    /// Bumped on every user edit. A save marks the buffer clean only if no
+    /// edit arrived while it was reading/writing — otherwise those keystrokes
+    /// would count as saved without being on disk, and a close or quit at
+    /// that moment would drop them.
+    private var editSeq = 0
+    /// The text this editor last read from or wrote to its file. If the file
+    /// on disk differs when we save, something else changed it (the AI chat,
+    /// git, a sync client, a to-do tick) — that version goes into history
+    /// before ours replaces it, so it is never silently lost.
+    private var lastSyncedText: String?
+    /// Which load the buffer should hold. Saves read through it, so if a load
+    /// never reached the page the old text can't be saved under the new name.
+    private(set) var loadToken = 0
+    /// Hash of the text of each file this editor has held (see SaveGuard).
+    private var loadedHashes: [URL: Int] = [:]
+    /// An "are you sure" is up; other saves wait for its answer.
+    private var guardPromptOpen = false
+    /// Quitting: nobody is there to answer, so a suspicious save is only held.
+    static var isTerminating = false
+    /// Every live editor, so quitting can save them all first.
+    private static let live = NSHashTable<EditorModel>.weakObjects()
+    static var liveEditors: [EditorModel] { live.allObjects.filter { !$0.isMirror } }
     /// Live word count of the current document (pushed from the web core).
     @Published private(set) var wordCount: Int = 0
     @Published var isExporting: Bool = false
@@ -95,7 +117,10 @@ final class EditorModel: ObservableObject, Identifiable {
         }
     }
 
-    private weak var webView: WKWebView?
+    /// Strong: the model owns its web view so a rebuilt pane re-hosts it
+    /// instead of booting a new one (see `WebView.makeNSView`).
+    private var webView: WKWebView?
+    var hostedWebView: WKWebView? { webView }
     private(set) var currentURL: URL?
     private var webReady = false
     private var pendingOpenURL: URL?   // open() called before the WebView booted
@@ -195,6 +220,7 @@ final class EditorModel: ObservableObject, Identifiable {
     private var noteListObserver: NSObjectProtocol?
     private var noteNamesCache: [String] = []
     init() {
+        Self.live.add(self)
         pdfPreviewOn = UserDefaults.standard.bool(forKey: "pdfPreviewOn")
         themeObserver = NotificationCenter.default.addObserver(
             forName: .noteproThemeChanged, object: nil, queue: .main
@@ -558,10 +584,14 @@ final class EditorModel: ObservableObject, Identifiable {
             refreshProperties()
             statusText = currentURL?.lastPathComponent ?? "新文件 Untitled"
             // A file requested before the WebView booted — load it now.
-            if let p = pendingOpenURL { pendingOpenURL = nil; open(p) }
+            // …and if the page (re)booted while this editor already had a file,
+            // load that file again: the fresh page shows the welcome note, and
+            // leaving it there would let the next autosave write it over the file.
+            if let p = pendingOpenURL ?? currentURL { pendingOpenURL = nil; open(p) }
             if let t = pendingMirrorText { pendingMirrorText = nil; setContent(t) }
         case "dirty":
             guard !isMirror else { break }   // mirror previews are read-only
+            editSeq &+= 1
             isDirty = true
             statusText = "已編輯 • \(currentURL?.lastPathComponent ?? "Untitled")"
             if latexPreviewVisible { scheduleLatexPreview() }
@@ -794,6 +824,7 @@ final class EditorModel: ObservableObject, Identifiable {
             } else {
                 try fm.moveItem(at: url, to: dest)
             }
+            if let hash = loadedHashes.removeValue(forKey: url) { loadedHashes[dest] = hash }
             currentURL = dest
             displayName = dest.lastPathComponent
             statusText = "已重新命名為 \(dest.lastPathComponent)"
@@ -821,6 +852,7 @@ final class EditorModel: ObservableObject, Identifiable {
         } else {
             return
         }
+        if let hash = loadedHashes.removeValue(forKey: cur) { loadedHashes[retarget] = hash }
         currentURL = retarget
         displayName = retarget.lastPathComponent
         statusText = displayName
@@ -1010,8 +1042,15 @@ final class EditorModel: ObservableObject, Identifiable {
 
     // MARK: - Swift -> JS
 
-    private func setContent(_ text: String) {
-        webView?.evaluateJavaScript("window.notepro.setContent(\(Self.jsStringLiteral(text)))")
+    private func setContent(_ text: String, keepUndo: Bool = false) {
+        loadToken &+= 1
+        let js = "window.notepro.setContent(\(Self.jsStringLiteral(text)), \(keepUndo), \(loadToken)); 0"
+        webView?.evaluateJavaScript(js) { [weak self] _, error in
+            guard error != nil, let self else { return }
+            // The buffer still holds the previous text. Saving is now refused
+            // (see getContentStrict) rather than writing it to this file.
+            self.statusText = "載入失敗，已暫停儲存：\(self.displayName)"
+        }
     }
 
     private func getContent(_ completion: @escaping (String) -> Void) {
@@ -1023,10 +1062,11 @@ final class EditorModel: ObservableObject, Identifiable {
 
     /// Like `getContent`, but distinguishes a genuinely empty buffer ("") from
     /// a failed JS call (nil). Every DISK-WRITE path must use this: the "" that
-    /// a failed/booting webview returns would silently truncate the file.
+    /// a failed/booting webview returns would silently truncate the file. Also
+    /// nil when the buffer isn't the document last loaded (see `loadToken`).
     private func getContentStrict(_ completion: @escaping (String?) -> Void) {
         guard let webView, webReady else { completion(nil); return }
-        webView.evaluateJavaScript("window.notepro.getContent()") { result, error in
+        webView.evaluateJavaScript("window.notepro.getContentIf(\(loadToken))") { result, error in
             completion(error == nil ? result as? String : nil)
         }
     }
@@ -1077,7 +1117,14 @@ final class EditorModel: ObservableObject, Identifiable {
             : "window.notepro.toLatex()"
         webView.evaluateJavaScript(js) { [weak self] result, _ in
             guard let self else { return }
-            let tex = Self.wrapLatexFragment(result as? String ?? "")
+            // toLatex() answers with JSON ({tex, bib, keys, …}); compiling that
+            // text as LaTeX gave the Markdown live PDF preview nothing usable.
+            var source = result as? String ?? ""
+            if self.docMode == .markdown,
+               let data = source.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let t = obj["tex"] as? String { source = t }
+            let tex = Self.wrapLatexFragment(source)
             let done: (Result<URL, Error>) -> Void = { [weak self] outcome in
                 guard let self else { return }
                 self.isCompilingPreview = false
@@ -1156,15 +1203,19 @@ final class EditorModel: ObservableObject, Identifiable {
         // Unsaved edits on the outgoing document → flush them to ITS url before
         // the buffer changes. evaluateJavaScript calls run in order, so this
         // read grabs the old buffer before setContent below replaces it.
-        if autoSaveEnabled, isDirty, let old = currentURL, old != url {
+        // Regardless of the autosave setting: "off" means "don't save while I
+        // type", not "throw my edits away when I switch documents" — which is
+        // what skipping this flush did.
+        if isDirty, let old = currentURL, old != url {
             isDirty = false          // consume: no double-flush on rapid switches
             flushingURL = old
-            let root = vaultRoot
+            let oldSynced = lastSyncedText
             getContentStrict { [weak self] text in
                 guard let self else { return }
                 if let text {
-                    try? text.write(to: old, atomically: true, encoding: .utf8)
-                    HistoryStore.snapshot(root: root, file: old, content: text)
+                    self.commitUnattended(text, to: old, synced: oldSynced)
+                } else {
+                    self.statusText = "未能儲存 \(old.lastPathComponent)（編輯器未就緒）"
                 }
                 self.flushingURL = nil
                 if let d = self.deferredOpenURL { self.deferredOpenURL = nil; self.open(d) }
@@ -1172,6 +1223,8 @@ final class EditorModel: ObservableObject, Identifiable {
         }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
+            lastSyncedText = text
+            loadedHashes[url] = text.hashValue
             currentURL = url
             displayName = url.lastPathComponent
             docMode = Self.mode(for: url)
@@ -1219,25 +1272,153 @@ final class EditorModel: ObservableObject, Identifiable {
         panel.nameFieldStringValue = currentURL?.lastPathComponent ?? (isTex ? "Untitled.tex" : "Untitled.md")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         currentURL = url
-        write(to: url)
+        write(to: url, confirmed: true)   // the save panel already asked about overwriting
     }
 
-    private func write(to url: URL) {
+    private func write(to url: URL, confirmed: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        let seq = editSeq
+        let synced = lastSyncedText
         getContentStrict { [weak self] text in
-            guard let self else { return }
+            guard let self else { completion?(false); return }
             // nil = the webview couldn't hand back the buffer (booting/busy) —
             // writing anything now would truncate the file with "" or stale data.
-            guard let text else { self.statusText = "儲存暫停（編輯器未就緒）"; return }
+            guard let text else { self.statusText = "儲存暫停（編輯器未就緒）"; completion?(false); return }
+            if !confirmed {
+                let verdict = self.saveVerdict(text, to: url)
+                if verdict != .safe {
+                    self.holdSave(text, to: url, verdict: verdict, completion: completion)
+                    return
+                }
+            }
             do {
-                try text.write(to: url, atomically: true, encoding: .utf8)
-                self.isDirty = false
+                let kept = try self.replaceFile(url, with: text, synced: synced)
+                if self.currentURL == url { self.lastSyncedText = text }
+                // Typed while this save was in flight: those edits aren't in
+                // `text`, so the buffer is still dirty (the autosave they
+                // scheduled will pick them up).
+                if self.editSeq == seq { self.isDirty = false }
                 self.displayName = url.lastPathComponent
-                self.statusText = "已儲存 \(url.lastPathComponent)"
-                HistoryStore.snapshot(root: self.vaultRoot, file: url, content: text) // revision history
+                self.statusText = kept
+                    ? "已儲存 \(url.lastPathComponent)（外部修改的版本已存入版本歷史）"
+                    : "已儲存 \(url.lastPathComponent)"
+                completion?(true)
             } catch {
                 self.statusText = "儲存失敗: \(error.localizedDescription)"
+                completion?(false)
             }
         }
+    }
+
+    private func saveVerdict(_ text: String, to url: URL) -> SaveGuard.Verdict {
+        SaveGuard.verdict(disk: try? String(contentsOf: url, encoding: .utf8),
+                          proposed: text, target: url, loaded: loadedHashes)
+    }
+
+    /// The one place the editor's text replaces a file: what was on disk goes
+    /// into history first, so even a file's very first save can be undone.
+    /// Returns true when that version had been changed by something else.
+    private func replaceFile(_ url: URL, with text: String, synced: String?) throws -> Bool {
+        let kept = Self.preserveExternalChange(at: url, synced: synced, replacing: text, root: vaultRoot)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        loadedHashes[url] = text.hashValue
+        HistoryStore.snapshot(root: vaultRoot, file: url, content: text)
+        return kept
+    }
+
+    /// Keep text the guard stopped: the file's version, then the new one, both
+    /// in history. Outside a vault the history sits beside the file.
+    private func keepInHistory(_ text: String, for url: URL) {
+        let root = vaultRoot ?? url.deletingLastPathComponent()
+        if let disk = try? String(contentsOf: url, encoding: .utf8) {
+            HistoryStore.snapshot(root: root, file: url, content: disk)
+        }
+        HistoryStore.snapshot(root: root, file: url, content: text)
+    }
+
+    /// A save the guard stopped. The file is untouched; ask what to do with the
+    /// text, or, when quitting, just keep it in history.
+    private func holdSave(_ text: String, to url: URL, verdict: SaveGuard.Verdict,
+                          completion: ((Bool) -> Void)?) {
+        // A prompt runs a nested event loop, so another autosave can land here.
+        guard !guardPromptOpen else { completion?(false); return }
+        autoSaveWork?.cancel(); autoSaveWork = nil
+        keepInHistory(text, for: url)
+        if Self.isTerminating {
+            isDirty = false
+            completion?(true)
+            return
+        }
+        guardPromptOpen = true
+        let replace = SaveGuard.askToReplace(url.lastPathComponent, verdict)
+        guardPromptOpen = false
+        if replace {
+            write(to: url, confirmed: true, completion: completion)
+            return
+        }
+        // Back to what's on disk, so the same text isn't offered again in 2s.
+        if currentURL == url {
+            isDirty = false
+            open(url)
+        }
+        statusText = "已保留原檔案（新文字在版本歷史）"
+        completion?(true)
+    }
+
+    /// Save with nobody waiting on the answer (leaving a file, exporting). On
+    /// any doubt the file stays as it was and the text goes to history; only
+    /// returns true if the file now holds `text`.
+    @discardableResult
+    private func commitUnattended(_ text: String, to url: URL, synced: String?) -> Bool {
+        let verdict = saveVerdict(text, to: url)
+        guard verdict == .safe else {
+            keepInHistory(text, for: url)
+            if !Self.isTerminating { SaveGuard.reportHeld(url.lastPathComponent, SaveGuard.detail(verdict)) }
+            statusText = "未寫入 \(url.lastPathComponent)（文字已存入版本歷史）"
+            return false
+        }
+        do {
+            _ = try replaceFile(url, with: text, synced: synced)
+            return true
+        } catch {
+            keepInHistory(text, for: url)
+            SaveGuard.reportHeld(url.lastPathComponent, error.localizedDescription)
+            statusText = "儲存失敗: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Save pending edits and report once the file on disk is current. Used
+    /// before handing a file to another editor (moving it to the other pane),
+    /// which loads it from disk: `write` is asynchronous, so opening the file
+    /// elsewhere straight after `saveIfDirty()` could read the old content.
+    /// `false` means the buffer couldn't be read — the caller must not hand
+    /// the file over, or the unsaved edits would be lost.
+    func flushToDisk(_ done: @escaping (Bool) -> Void) { flushToDisk(attempts: 3, done) }
+
+    private func flushToDisk(attempts: Int, _ done: @escaping (Bool) -> Void) {
+        autoSaveWork?.cancel(); autoSaveWork = nil
+        guard isDirty, let url = currentURL else { done(true); return }
+        write(to: url) { [weak self] ok in
+            guard let self else { done(ok); return }
+            // The pending autosave was cancelled above; put it back so the
+            // edits still get saved once the editor can be read again.
+            guard ok else { self.scheduleAutoSave(); done(false); return }
+            // Keystrokes landed while that save was in flight — save again.
+            if self.isDirty, attempts > 1 { self.flushToDisk(attempts: attempts - 1, done); return }
+            if self.isDirty { self.scheduleAutoSave() }
+            done(!self.isDirty)
+        }
+    }
+
+    /// Keep the version on disk in history before it's overwritten (a no-op if
+    /// history already ends with it). Returns true when that version wasn't
+    /// what this editor last read or wrote, i.e. something else changed it.
+    @discardableResult
+    static func preserveExternalChange(at url: URL, synced: String?, replacing text: String,
+                                       root: URL?) -> Bool {
+        guard let disk = try? String(contentsOf: url, encoding: .utf8), disk != text else { return false }
+        if !disk.isEmpty { HistoryStore.snapshot(root: root, file: url, content: disk) }
+        return synced != nil && disk != synced
     }
 
     // MARK: - Mirror (pop-out live preview) broadcast
@@ -1398,10 +1579,11 @@ final class EditorModel: ObservableObject, Identifiable {
             }
             let converterBib = obj["bib"] as? String ?? ""
             let keys = obj["keys"] as? [String] ?? []
+            let format: ZoteroService.BibFormat = (obj["bibFormat"] as? String) == "bibtex" ? .bibtex : .biblatex
             let name = self.currentURL?.deletingPathExtension().lastPathComponent ?? "note"
             // Auto-generate references.bib from Zotero for the cited keys.
             if !keys.isEmpty { self.statusText = "取得 Zotero 引用…" }
-            ZoteroService.exportBib(keys) { [weak self] zbib in
+            ZoteroService.exportBib(keys, format: format) { [weak self] zbib in
                 guard let self else { return }
                 let bib = self.mergeLocalLib(zbib.isEmpty ? converterBib : zbib)
                 // Write references.bib into the hidden output folder (not the vault).
@@ -1435,7 +1617,13 @@ final class EditorModel: ObservableObject, Identifiable {
             let proceed: (String) -> Void = { [weak self] bib in
                 guard let self else { return }
                 if let url = target {
-                    try? text.write(to: url, atomically: true, encoding: .utf8) // save the user's raw file
+                    // Save the user's raw file. It compiles from disk, so don't
+                    // go on if the save was held back.
+                    guard self.commitUnattended(text, to: url, synced: self.lastSyncedText) else {
+                        self.finishExport(.failure(PDFExporter.ExportError.compileFailed("檔案沒有寫入，已取消編譯")))
+                        return
+                    }
+                    if self.currentURL == url { self.lastSyncedText = text }
                     let dir = url.deletingLastPathComponent()
                     if !bib.isEmpty {
                         try? bib.write(to: dir.appendingPathComponent("references.bib"),
@@ -1759,7 +1947,7 @@ final class EditorModel: ObservableObject, Identifiable {
                         self.statusText = "AI 修正完成，但你已切換文件 — 未套用（回到原文件再跑一次）"
                         return
                     }
-                    self.setContent(out)
+                    self.setContent(out, keepUndo: true)
                     if let url = target { self.write(to: url) }   // saves + snapshots
                     self.statusText = "AI 已套用修正 — 重新編譯中（可從版本歷史還原）"
                     if self.latexPreviewVisible { self.scheduleLatexPreview() }
@@ -1821,6 +2009,7 @@ final class EditorModel: ObservableObject, Identifiable {
             else { self.statusText = "轉換失敗（轉換階段）"; return }
             let converterBib = obj["bib"] as? String ?? ""
             let keys = obj["keys"] as? [String] ?? []
+            let format: ZoteroService.BibFormat = (obj["bibFormat"] as? String) == "bibtex" ? .bibtex : .biblatex
             guard let src = self.currentURL else { self.exportLaTeX(); return }
             // Generated LaTeX goes to the hidden output folder, NOT next to the note.
             let dir = VaultModel.latexOutputDir(root: vault.rootURL, for: src)
@@ -1834,7 +2023,7 @@ final class EditorModel: ObservableObject, Identifiable {
             self.open(texURL) // switches to LaTeX mode — editable right away
             self.statusText = "已轉為 LaTeX（輸出於 .notepro/latex）— 繼續編輯"
             // Fetch the bibliography from Zotero asynchronously.
-            self.writeReferencesBib(keys: keys, fallback: converterBib, in: dir)
+            self.writeReferencesBib(keys: keys, fallback: converterBib, in: dir, format: format)
         }
     }
 
@@ -1844,15 +2033,15 @@ final class EditorModel: ObservableObject, Identifiable {
     /// file is opened as-is (so hand-edits on the other side are preserved).
     func toggleMdLatex(vault: VaultModel) {
         vaultRoot = vault.rootURL
-        guard let url = currentURL, let webView else {
+        guard let url = currentURL, webView != nil else {
             if docMode == .markdown { convertToLaTeX(vault: vault) }
             return
         }
-        webView.evaluateJavaScript("window.notepro.getContent()") { [weak self] result, error in
+        getContentStrict { [weak self] buffer in
             guard let self else { return }
             // A failed buffer read must not fall through as "" — that would
             // truncate the file below. Bail; the user can retry.
-            guard error == nil, let buffer = result as? String else {
+            guard let buffer else {
                 self.statusText = "編輯器未就緒，請再試一次"; return
             }
             let fm = FileManager.default
@@ -1860,7 +2049,9 @@ final class EditorModel: ObservableObject, Identifiable {
             // bump its mtime when nothing changed — that's how we detect edits).
             let onDisk = try? String(contentsOf: url, encoding: .utf8)
             if onDisk == nil || onDisk != buffer {
-                try? buffer.write(to: url, atomically: true, encoding: .utf8)
+                guard self.commitUnattended(buffer, to: url, synced: self.lastSyncedText) else { return }
+                self.lastSyncedText = buffer
+                self.isDirty = false
             }
             func mtime(_ u: URL) -> Date {
                 ((try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date) ?? .distantPast
@@ -1910,7 +2101,8 @@ final class EditorModel: ObservableObject, Identifiable {
     }
 
     /// Fetch cited entries from Zotero (async) and write references.bib into `dir`.
-    private func writeReferencesBib(keys: [String], fallback: String, in dir: URL) {
+    private func writeReferencesBib(keys: [String], fallback: String, in dir: URL,
+                                    format: ZoteroService.BibFormat = .biblatex) {
         let target = dir.appendingPathComponent("references.bib")
         guard !keys.isEmpty else {
             let merged = mergeLocalLib(fallback)
@@ -1918,7 +2110,7 @@ final class EditorModel: ObservableObject, Identifiable {
             return
         }
         statusText = "取得 Zotero 引用…"
-        ZoteroService.exportBib(keys) { [weak self] zbib in
+        ZoteroService.exportBib(keys, format: format) { [weak self] zbib in
             guard let self else { return }
             let bib = self.mergeLocalLib(zbib.isEmpty ? fallback : zbib)
             if !bib.isEmpty {
@@ -2002,7 +2194,7 @@ final class EditorModel: ObservableObject, Identifiable {
         return types
     }()
 
-    private static func jsStringLiteral(_ s: String) -> String {
+    static func jsStringLiteral(_ s: String) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
         let arrayLiteral = String(data: data, encoding: .utf8) ?? "[\"\"]"
         return String(arrayLiteral.dropFirst().dropLast())

@@ -15,12 +15,22 @@ import {
 import { CONVERTER_TEMPLATES } from "./builtin-templates.js";
 import { chartBlocksToTikz } from "../editor/chartTikz.js";
 
-/** Journal templates that require natbib citations, and their `.bst` style. */
+/** Templates cited with natbib, and their `.bst` style. */
 export const NATBIB_TEMPLATES: Record<string, string> = {
   apj: "aasjournal",
   mnras: "mnras",
   aanda: "aa",
+  // Not a journal class, but for astronomy papers: references the way ApJ
+  // prints them — "(Sandell et al. 2020)" in the text, and
+  // "Sandell, G., Wright, M., Güsten, R., et al. 2020, ApJ, 904, 139" in the
+  // list — instead of biblatex's numeric style with ISSN/URL/"visited on".
+  // (`article`, the plain fallback, keeps biblatex.)
+  academic: "aasjournal",
 };
+
+/** Of those, the journal classes that bring natbib (and hyperref) themselves;
+ * the others need the preamble to load them. */
+const CLASS_PROVIDES_NATBIB = new Set(["apj", "mnras", "aanda"]);
 import { escapeLatex } from "./emitter.js";
 import type { Asset, ConvertOptions, ConvertResult } from "./types.js";
 
@@ -43,6 +53,15 @@ function authorField(author: string | string[] | undefined): string {
     return author.map((a) => escapeLatex(a)).join(" \\and ");
   }
   return escapeLatex(author);
+}
+
+/** The bibliography commands. In a plain class (academic) the list is set
+ * single-spaced like a journal's, even when the body uses 1.5 spacing. */
+function bibBlock(style: string, plainClass: boolean): string {
+  const cmds = `\\bibliographystyle{${style}}\n\\bibliography{references}`;
+  return plainClass
+    ? `\\begingroup\n\\ifdefined\\singlespacing\\singlespacing\\fi\n${cmds}\n\\endgroup`
+    : cmds;
 }
 
 /** Convert Obsidian-flavored Markdown to a complete LaTeX document. */
@@ -75,6 +94,7 @@ export function convert(source: string, options: ConvertOptions = {}): ConvertRe
     bibResource,
     unicodeText: source,
     bibMode,
+    loadNatbib: bibMode === "natbib" && !CLASS_PROVIDES_NATBIB.has(templateId),
     ...(options.bibBackend ? { bibBackend: options.bibBackend } : {}),
   });
 
@@ -101,7 +121,7 @@ export function convert(source: string, options: ConvertOptions = {}): ConvertRe
     date,
     body,
     bib: features.has("natbib")
-      ? `\\bibliographystyle{${natbibStyle ?? "aasjournal"}}\n\\bibliography{references}`
+      ? bibBlock(natbibStyle ?? "aasjournal", !CLASS_PROVIDES_NATBIB.has(templateId))
       : features.has("biblatex") ? "\\printbibliography" : "",
   };
 
@@ -115,5 +135,6 @@ export function convert(source: string, options: ConvertOptions = {}): ConvertRe
     assets: allAssets,
     frontmatter,
     cjk,
+    bibFormat: bibMode === "natbib" ? "bibtex" : "biblatex",
   };
 }

@@ -17,8 +17,13 @@ echo "==> [3/4] Building app (xcodebuild)…"
     -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO -quiet )
 
 APP="$ROOT/apple/build/Build/Products/Release/Nebula.app"
-echo "==> [4/4] Ad-hoc signing + copying to repo root…"
+echo "==> [4/5] Ad-hoc signing…"
 codesign --force --deep -s - "$APP"
+
+# Losing or crossing files is the worst thing this app can do. A build that
+# fails this never replaces the working Nebula.app. (Temp files only.)
+echo "==> [5/5] Save self-test, then copying to repo root…"
+"$APP/Contents/MacOS/Nebula" --save-selftest
 rm -rf "$ROOT/Nebula.app"
 cp -R "$APP" "$ROOT/Nebula.app"
 codesign --force --deep -s - "$ROOT/Nebula.app"

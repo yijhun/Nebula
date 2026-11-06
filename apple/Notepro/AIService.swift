@@ -45,7 +45,7 @@ final class OllamaService: AIService {
     func edit(text: String, instruction: String, completion: @escaping (Result<String, Error>) -> Void) {
         let prompt = """
         你是專業的寫作助手。請依照指示處理「文字」，**只輸出處理後的結果**，不要加任何解釋、引號或前後綴，並保留原本的語言。
-
+        \(Self.styleBlock)
         指示：\(instruction)
 
         文字：
@@ -57,6 +57,7 @@ final class OllamaService: AIService {
     func generate(context: String, instruction: String, completion: @escaping (Result<String, Error>) -> Void) {
         let prompt = """
         你是專業的寫作助手。以下是文件目前的內容（上文）。請依照指示，產生「要插入到游標處的新內容」，**只輸出新內容本身**，不要重複上文、不要任何解釋。保留原本的語言。
+        \(Self.styleBlock)
 
         上文：
         \(context.suffix(1500))
@@ -68,6 +69,13 @@ final class OllamaService: AIService {
 
     func complete(prompt: String, timeout: TimeInterval, completion: @escaping (Result<String, Error>) -> Void) {
         post(prompt: prompt, timeout: timeout, completion: completion)
+    }
+
+    /// The user's style guide for writing tasks (edit / generate). Not added
+    /// to `complete`, which also serves non-writing jobs (LaTeX fixes, JSON).
+    private static var styleBlock: String {
+        guard let guide = WritingStyle.promptText() else { return "" }
+        return "\n請用作者本人的文風寫（以下文風指南是從作者自己的筆記歸納的）：\n\(guide)\n"
     }
 
     /// Shared POST to Ollama /api/generate. Completes on the main queue.

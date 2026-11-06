@@ -58,7 +58,25 @@ enum HistoryStore {
     }
 
     private static func prune(_ snaps: [Snapshot]) {
-        let sorted = snaps.sorted { $0.date > $1.date }
-        for s in sorted.dropFirst(keep) { try? FileManager.default.removeItem(at: s.url) }
+        let keepers = retained(snaps.map(\.date), now: Date())
+        for s in snaps where !keepers.contains(s.date) { try? FileManager.default.removeItem(at: s.url) }
+    }
+
+    /// Which snapshots survive. Autosave snapshots every couple of seconds, so
+    /// a flat "newest N" would let a few minutes of saves, including saves of a
+    /// damaged file, push out the last good version. Older ones are thinned
+    /// instead: the newest 60, then one per hour for a week, then one per day.
+    static func retained(_ dates: [Date], now: Date) -> Set<Date> {
+        let sorted = dates.sorted(by: >)
+        var out = Set(sorted.prefix(keep))
+        var seen = Set<Int>()
+        for date in sorted.dropFirst(keep) {
+            let age = now.timeIntervalSince(date)
+            let bucket = age < 7 * 86_400
+                ? Int(date.timeIntervalSince1970 / 3_600)
+                : -Int(date.timeIntervalSince1970 / 86_400)   // negative: never collides with an hour
+            if seen.insert(bucket).inserted { out.insert(date) }
+        }
+        return out
     }
 }

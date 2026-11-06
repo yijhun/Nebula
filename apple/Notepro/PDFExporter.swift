@@ -104,10 +104,24 @@ enum PDFExporter {
         // a plain TeX mistake would just pay the stall to fail again.
         guard case .failure(let error) = offline,
               case ExportError.compileFailed(let log) = error,
-              log.range(of: "not found", options: .caseInsensitive) != nil
+              Self.mayBeMissingResource(log)
         else { return offline }
         return runTectonicOnce(in: dir, texName: texName, stem: stem,
                                quick: quick, offline: false)
+    }
+
+    /// Whether a failed cache-only compile may just be missing a file the
+    /// cache hasn't got yet. A missing package says "not found"; but a missing
+    /// font is reported by the PDF writer as "Could not locate … font" /
+    /// "Cannot proceed without .vf or physical font" — first seen when a note
+    /// used \mathbb, whose msbm10.pfb had never been downloaded. Mistakes in
+    /// the document itself carry a source location ("note.tex:12:"), and
+    /// those aren't retried.
+    static func mayBeMissingResource(_ log: String) -> Bool {
+        if log.range(of: "not found", options: .caseInsensitive) != nil { return true }
+        // Only located ERRORS count — warnings carry locations too
+        // ("note.tex:394: Overfull \hbox") and must not block the retry.
+        return log.range(of: #"(?m)^error: .*\.tex:\d+:"#, options: .regularExpression) == nil
     }
 
     /// Tectonic reaches for its bundle server on every run — even under

@@ -8,9 +8,19 @@ import UniformTypeIdentifiers
 struct EditorPane: View {
     @EnvironmentObject var editor: EditorModel
     @EnvironmentObject var vault: VaultModel
-    @EnvironmentObject var tabs: TabsModel
+    @EnvironmentObject var tabs: TabsModel       // the window
+    @EnvironmentObject var group: EditorGroup    // this pane's tabs
     @EnvironmentObject var index: IndexService
     @Environment(\.openWindow) private var openWindow
+
+    /// Side by side, half the width: toolbar actions become icons.
+    private var compact: Bool { tabs.splitOn && !tabs.splitVertical }
+    private var isRight: Bool { group === tabs.right }
+    /// Both panes carry the same toolbar; only the one you're working in owns
+    /// its key equivalents, or ⌘O would always go to whichever was built first.
+    private func paneKey(_ key: KeyEquivalent, _ mods: EventModifiers) -> KeyboardShortcut? {
+        tabs.isFocused(group) ? KeyboardShortcut(key, modifiers: mods) : nil
+    }
 
     /// LaTeX templates offered by the toolbar menu (content lives in the web core).
     static let templates: [(id: String, label: String)] = [
@@ -27,7 +37,7 @@ struct EditorPane: View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(tabs.tabs) { tab in TabChip(tab: tab) }
+                    ForEach(group.tabs) { tab in TabChip(tab: tab) }
                     // Trailing flexible spacer so dropping anywhere in the empty
                     // part of the bar still lands a drop (appends to the end).
                     Color.clear.frame(minWidth: 40, maxWidth: .infinity)
@@ -35,7 +45,7 @@ struct EditorPane: View {
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
             }
-            Button { tabs.newTab() } label: { Image(systemName: "plus") }
+            Button { tabs.focus(right: isRight); group.newTab() } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless)
                 .help("新分頁（檢視選單 ⌘T）")
                 .padding(.horizontal, 8)
@@ -47,8 +57,8 @@ struct EditorPane: View {
         .background(.bar)
         // Drop anywhere on the bar (not just on a chip) → reorder/open at the end.
         .dropDestination(for: URL.self) { items, _ in
-            guard let url = items.first, let last = tabs.tabs.last else { return false }
-            tabs.handleTabDrop(url, onto: last.id, after: true)
+            guard let url = items.first, let last = group.tabs.last else { return false }
+            tabs.drop(url, onto: last.id, in: group, after: true)
             return true
         } isTargeted: { tabBarDropTargeted = $0 }
     }
@@ -69,15 +79,15 @@ struct EditorPane: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Button { editor.openPalette(.files) } label: {
-                    Label(LZ("快速開啟"), systemImage: "magnifyingglass")
+                    Label(LZ("快速開啟"), systemImage: "magnifyingglass").labelStyle(PaneLabelStyle(compact: compact))
                 }
-                .keyboardShortcut("o", modifiers: .command)
+                .keyboardShortcut(paneKey("o", .command))
                 .help("快速開啟檔案 (⌘O)")
 
                 Button { editor.openPalette(.content) } label: {
-                    Label(LZ("搜尋"), systemImage: "text.magnifyingglass")
+                    Label(LZ("搜尋"), systemImage: "text.magnifyingglass").labelStyle(PaneLabelStyle(compact: compact))
                 }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .keyboardShortcut(paneKey("f", [.command, .shift]))
                 .help("搜尋內容 (⇧⌘F)")
 
                 Divider().frame(height: 18)
@@ -86,16 +96,17 @@ struct EditorPane: View {
                     Label(editor.docMode == .markdown ? LZ("轉 LaTeX") : LZ("回 Markdown"),
                           systemImage: editor.docMode == .markdown
                             ? "arrow.right.doc.on.clipboard" : "arrow.uturn.backward")
+                    .labelStyle(PaneLabelStyle(compact: compact))
                 }
                 .help(editor.docMode == .markdown ? "轉成 LaTeX — ⌥⌘L" : "切回 Markdown — ⌥⌘L")
 
                 Button { editor.checkLatex() } label: {
-                    Label(LZ("檢查"), systemImage: "checkmark.seal")
+                    Label(LZ("檢查"), systemImage: "checkmark.seal").labelStyle(PaneLabelStyle(compact: compact))
                 }
                 .help("檢查 $ / $$ / \\begin 是否配對，並跳到第一個問題")
 
                 Button { editor.exportPDF() } label: {
-                    Label(LZ("匯出 PDF"), systemImage: "doc.richtext")
+                    Label(LZ("匯出 PDF"), systemImage: "doc.richtext").labelStyle(PaneLabelStyle(compact: compact))
                 }
                 .disabled(editor.isExporting)
                 .help("匯出 PDF (⌘E)")
@@ -166,12 +177,32 @@ struct EditorPane: View {
                     // ── 視窗 Window ──
                     Section(LZ("視窗")) {
                         Button { tabs.splitOn.toggle() } label: {
-                            Label(LZ("分割"), systemImage: "rectangle.split.2x1")
+                            Label(tabs.splitOn ? LZ("關閉分割") : LZ("分割"), systemImage: "rectangle.split.2x1")
                         }
-                        Button { openWindow(id: "main", value: UUID()) } label: {
+                        if tabs.splitOn {
+                            Button { tabs.splitVertical.toggle() } label: {
+                                Label(tabs.splitVertical ? LZ("改為左右分割") : LZ("改為上下分割"),
+                                      systemImage: tabs.splitVertical ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                            }
+                        }
+                        if editor.currentURL != nil {
+                            Button { tabs.moveToOtherSide(from: group) } label: {
+                                Label(LZ("移到另一側"), systemImage: "arrow.left.arrow.right")
+                            }
+                            Button {
+                                if let url = editor.currentURL {
+                                    tabs.release(url) { ok in
+                                        if ok { openWindow(id: "main", value: MainWindowSeed(url: url)) }
+                                    }
+                                }
+                            } label: {
+                                Label(LZ("移到新視窗"), systemImage: "macwindow.on.rectangle")
+                            }
+                        }
+                        Button { openWindow(id: "main", value: MainWindowSeed()) } label: {
                             Label(LZ("新視窗"), systemImage: "macwindow.badge.plus")
                         }
-                        .keyboardShortcut("n", modifiers: [.command, .option])
+                        .keyboardShortcut(paneKey("n", [.command, .option]))
                     }
                     Divider()
                     Button { NotificationCenter.default.post(name: .noteproOpenShortcuts, object: nil) } label: {
@@ -198,12 +229,48 @@ struct EditorPane: View {
             HSplitView {
                 editorStack.frame(minWidth: 240)
                 if editor.latexPreviewVisible {
-                    pdfPanel.frame(minWidth: 240)
+                    LatexPreviewPanel().frame(minWidth: 240)
                 }
             }
             backlinksBar
             Divider()
             statusBar
+        }
+        // Which pane commands go to: a thin accent bar on top when split.
+        .overlay(alignment: .top) {
+            if tabs.splitOn && tabs.isFocused(group) {
+                Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false)
+            }
+        }
+        .simultaneousGesture(TapGesture().onEnded { tabs.focus(right: isRight) })
+    }
+
+    /// A fresh right pane says how to put a file in it, instead of showing the
+    /// welcome note.
+    @ViewBuilder
+    private var emptySideHint: some View {
+        if tabs.splitOn, isRight, group.tabs.count == 1, group.active.currentURL == nil {
+            VStack(spacing: 14) {
+                Image(systemName: "rectangle.split.2x1").font(.system(size: 34)).foregroundStyle(.tertiary)
+                Text(LZ("右側編輯區")).font(.headline)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(LZ("點一下這裡，再到側邊欄點檔案，就會開在這一側"), systemImage: "cursorarrow.click")
+                    Label(LZ("在側邊欄按住 ⌥ 點檔案：直接開到另一側"), systemImage: "option")
+                    Label(LZ("或把檔案、分頁拖到這裡"), systemImage: "hand.draw")
+                }
+                .font(.callout).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+            .contentShape(Rectangle())
+            .onTapGesture { tabs.focus(right: true) }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first else { return false }
+                tabs.focus(right: true)
+                tabs.open(url, in: group)
+                return true
+            }
         }
     }
 
@@ -211,17 +278,122 @@ struct EditorPane: View {
     /// one is shown).
     private var editorStack: some View {
         ZStack {
-            ForEach(tabs.tabs) { tab in
+            ForEach(group.tabs) { tab in
                 WebView()
                     .environmentObject(tab)
-                    .opacity(tab.id == tabs.activeID ? 1 : 0)
-                    .allowsHitTesting(tab.id == tabs.activeID)
+                    .opacity(tab.id == group.activeID ? 1 : 0)
+                    .allowsHitTesting(tab.id == group.activeID)
             }
+            emptySideHint
         }
     }
 
-    /// The compiled-PDF live preview pane (with compile-status overlays).
-    private var pdfPanel: some View {
+    /// Bottom status bar: message on the left; word count / mode / busy on the right.
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            Text(editor.statusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            if editor.isExporting || editor.isCompilingPreview || editor.aiFixing {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text(editor.aiFixing ? "AI" : LZ("編譯中")).font(.caption2).foregroundStyle(.secondary)
+            }
+            if editor.wordCount > 0 {
+                Text("\(editor.wordCount) \(LZ("字"))").font(.caption2).foregroundStyle(.secondary)
+            }
+            Text(editor.docMode == .latex ? "LaTeX" : "Markdown")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 3)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var backlinksBar: some View {
+        let links = index.backlinks(for: editor.currentURL)
+        if !links.isEmpty {
+            Divider()
+            HStack(spacing: 8) {
+                Image(systemName: "link").font(.caption).foregroundStyle(.secondary)
+                Text("反向連結 \(links.count)").font(.caption).foregroundStyle(.secondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(links) { e in
+                            Button(e.url.deletingPathExtension().lastPathComponent) { tabs.open(e.url) }
+                                .buttonStyle(.link).font(.caption)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.bar)
+        }
+    }
+}
+
+
+/// A single tab chip in the tab bar.
+struct TabChip: View {
+    @EnvironmentObject var tabs: TabsModel
+    @EnvironmentObject var group: EditorGroup
+    @ObservedObject var tab: EditorModel
+    @State private var dropTargeted = false
+
+    var body: some View {
+        let active = group.activeID == tab.id
+        let chip = HStack(spacing: 6) {
+            if tab.isDirty {
+                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    .help("未儲存變更")
+            }
+            Text(tab.displayName)
+                .font(.caption)
+                .lineLimit(1)
+            if group.tabs.count > 1 {
+                Button { group.close(tab.id) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8))
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            active ? Color.accentColor.opacity(0.22) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6)
+        )
+        // Blue edge while a dragged tab/file hovers over this slot.
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { group.activate(tab.id); tabs.focus(right: group === tabs.right) }
+        // Drop a dragged tab (or sidebar file) here → reorder / open at this slot.
+        .dropDestination(for: URL.self) { items, _ in
+            guard let url = items.first else { return false }
+            tabs.drop(url, onto: tab.id, in: group)
+            return true
+        } isTargeted: { dropTargeted = $0 }
+
+        // A saved tab can be dragged — within the bar to reorder, or into the
+        // split pane to open there.
+        if let url = tab.currentURL {
+            chip.draggable(url)
+        } else {
+            chip
+        }
+    }
+}
+
+
+/// The compiled-PDF live preview pane (with compile-status overlays). Shared
+/// by the main editor and the split pane, so both get the same preview.
+struct LatexPreviewPanel: View {
+    @EnvironmentObject var editor: EditorModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
         PDFPreview(url: editor.previewPDF, version: editor.previewVersion,
                    syncTarget: editor.syncTarget,
                    onReverse: { p, x, y in editor.runSyncTeXReverse(page: p, x: x, y: y) })
@@ -272,150 +444,6 @@ struct EditorPane: View {
                         .font(.caption).foregroundStyle(.secondary).padding(10)
                 }
             }
-    }
-
-    /// Bottom status bar: message on the left; word count / mode / busy on the right.
-    private var statusBar: some View {
-        HStack(spacing: 12) {
-            Text(editor.statusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            Spacer()
-            if editor.isExporting || editor.isCompilingPreview || editor.aiFixing {
-                ProgressView().controlSize(.small).scaleEffect(0.7)
-                Text(editor.aiFixing ? "AI" : LZ("編譯中")).font(.caption2).foregroundStyle(.secondary)
-            }
-            if editor.wordCount > 0 {
-                Text("\(editor.wordCount) \(LZ("字"))").font(.caption2).foregroundStyle(.secondary)
-            }
-            Text(editor.docMode == .latex ? "LaTeX" : "Markdown")
-                .font(.caption2).foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 3)
-        .background(.bar)
-    }
-
-    @ViewBuilder
-    private var backlinksBar: some View {
-        let links = index.backlinks(for: editor.currentURL)
-        if !links.isEmpty {
-            Divider()
-            HStack(spacing: 8) {
-                Image(systemName: "link").font(.caption).foregroundStyle(.secondary)
-                Text("反向連結 \(links.count)").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(links) { e in
-                            Button(e.url.deletingPathExtension().lastPathComponent) { tabs.open(e.url) }
-                                .buttonStyle(.link).font(.caption)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.bar)
-        }
-    }
-}
-
-
-/// A single tab chip in the tab bar.
-struct TabChip: View {
-    @EnvironmentObject var tabs: TabsModel
-    @ObservedObject var tab: EditorModel
-    @State private var dropTargeted = false
-
-    var body: some View {
-        let active = tabs.activeID == tab.id
-        let chip = HStack(spacing: 6) {
-            if tab.isDirty {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                    .help("未儲存變更")
-            }
-            Text(tab.displayName)
-                .font(.caption)
-                .lineLimit(1)
-            if tabs.tabs.count > 1 {
-                Button { tabs.close(tab.id) } label: {
-                    Image(systemName: "xmark").font(.system(size: 8))
-                }
-                .buttonStyle(.borderless)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            active ? Color.accentColor.opacity(0.22) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
-        )
-        // Blue edge while a dragged tab/file hovers over this slot.
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { tabs.activate(tab.id) }
-        // Drop a dragged tab (or sidebar file) here → reorder / open at this slot.
-        .dropDestination(for: URL.self) { items, _ in
-            guard let url = items.first else { return false }
-            tabs.handleTabDrop(url, onto: tab.id)
-            return true
-        } isTargeted: { dropTargeted = $0 }
-
-        // A saved tab can be dragged — within the bar to reorder, or into the
-        // split pane to open there.
-        if let url = tab.currentURL {
-            chip.draggable(url)
-        } else {
-            chip
-        }
-    }
-}
-
-
-/// The right-hand split pane: a companion editor. Drag a file from the sidebar
-/// onto it to open it here (side-by-side with the left editor).
-struct SecondaryPane: View {
-    @EnvironmentObject var editor: EditorModel   // tabs.secondary
-    @EnvironmentObject var tabs: TabsModel
-    @State private var dropTargeted = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "doc")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(editor.currentURL == nil ? "拖分頁或檔案到此並排" : editor.displayName)
-                    .font(.caption).lineLimit(1)
-                    .foregroundStyle(editor.currentURL == nil ? .secondary : .primary)
-                Spacer()
-                Button { editor.save() } label: { Image(systemName: "square.and.arrow.down") }
-                    .buttonStyle(.borderless).help("儲存")
-                Button { editor.exportPDF() } label: { Image(systemName: "doc.richtext") }
-                    .buttonStyle(.borderless).help("匯出 PDF").disabled(editor.isExporting)
-                Button { tabs.splitVertical.toggle() } label: {
-                    Image(systemName: tabs.splitVertical ? "rectangle.split.2x1" : "rectangle.split.1x2")
-                }
-                .buttonStyle(.borderless).help(tabs.splitVertical ? "改為左右分割" : "改為上下分割")
-                Button { tabs.splitOn = false } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.borderless).help("關閉分割")
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.bar)
-            Divider()
-            WebView()   // env editor == tabs.secondary
-        }
-        .overlay {
-            if dropTargeted {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.accentColor, lineWidth: 3)
-                    .background(Color.accentColor.opacity(0.08))
-                    .allowsHitTesting(false)
-            }
-        }
-        .dropDestination(for: URL.self) { urls, _ in
-            if let u = urls.first { editor.open(u) }
-            return true
-        } isTargeted: { dropTargeted = $0 }
     }
 }
 
@@ -532,5 +560,19 @@ private struct PropertyRow: View {
 
     private func commit() {
         if text != field.value { editor.setProperty(field.key, text) }
+    }
+}
+
+
+/// Title + icon normally; icon only when the pane is half the window wide.
+struct PaneLabelStyle: LabelStyle {
+    let compact: Bool
+    @ViewBuilder
+    func makeBody(configuration: Configuration) -> some View {
+        if compact {
+            Label(configuration).labelStyle(.iconOnly)
+        } else {
+            Label(configuration).labelStyle(.titleAndIcon)
+        }
     }
 }

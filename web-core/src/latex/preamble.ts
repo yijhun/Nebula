@@ -44,6 +44,9 @@ export interface PreambleOptions {
   /** "natbib" (AASTeX/ApJ) suppresses biblatex + hyperref, which the class
    * already provides / conflicts with. Default "biblatex". */
   bibMode?: "biblatex" | "natbib";
+  /** natbib mode in a plain class (article): load natbib ourselves, ApJ
+   * punctuation, and keep hyperref (the .bst links DOIs with \\href). */
+  loadNatbib?: boolean;
 }
 
 export function buildPreamble(
@@ -95,10 +98,28 @@ export function buildPreamble(
     lines.push(`\\addbibresource{${opts.bibResource ?? "references.bib"}}`);
   }
 
-  // hyperref should be loaded late (after most packages). Skip under natbib/AASTeX
-  // — the journal class already loads hyperref (and clashes if reloaded).
-  if (features.has("hyperref") && opts.bibMode !== "natbib") {
-    lines.push("\\usepackage{hyperref}");
+  if (opts.loadNatbib && features.has("natbib")) {
+    lines.push("\\usepackage{natbib}");
+    // ApJ punctuation: "(Sandell et al. 2020)", no comma before the year.
+    lines.push("\\setcitestyle{aysep={}}");
+    // The reference list as ApJ sets it: entries packed with no gap between
+    // them (natbib's default \\bibsep left a blank half-line after each).
+    lines.push("\\setlength{\\bibsep}{0pt}");
+    // aasjournal.bst only \\providecommand's these, so ours win: arXiv / ASCL
+    // entries are named compactly ("arXiv:…") instead of spelling out the URL.
+    // (\\dodoi stays: ApJ does print "doi: …", and the .bst writes the comma
+    // before it, so blanking it left "ApJ, 904, 139," on every entry.)
+    lines.push("\\newcommand{\\doarXiv}[1]{\\href{https://arxiv.org/abs/#1}{arXiv:#1}}");
+    lines.push("\\newcommand{\\doeprint}[1]{\\href{https://ascl.net/#1}{ascl:#1}}");
+  }
+
+  // hyperref should be loaded late (after most packages). Skip when a journal
+  // class supplies natbib — it already loads hyperref (and clashes if reloaded).
+  const classHasHyperref = opts.bibMode === "natbib" && !opts.loadNatbib;
+  const wantHyperref = features.has("hyperref") || (opts.loadNatbib && features.has("natbib"));
+  if (wantHyperref && !classHasHyperref) {
+    // Coloured link text like the journals, not hyperref's default boxes.
+    lines.push("\\usepackage[colorlinks=true,allcolors=blue]{hyperref}");
   }
 
   return lines.join("\n");

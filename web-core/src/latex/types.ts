@@ -163,4 +163,8 @@ export interface ConvertResult {
   frontmatter: Frontmatter;
   /** Whether CJK content was detected/enabled. */
   cjk: boolean;
+  /** Which .bib dialect the document needs: classic BibTeX fields (year,
+   * journal) for natbib .bst styles, or biblatex fields (date, journaltitle).
+   * A .bst can't read biblatex fields — years came out as "????". */
+  bibFormat: "bibtex" | "biblatex";
 }

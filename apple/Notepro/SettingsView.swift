@@ -176,6 +176,7 @@ struct SettingsView: View {
                 Toggle(LZ("Vim 模式（無鼠標編輯）"), isOn: $vimMode)
                     .onChange(of: vimMode) { _, _ in NotificationCenter.default.post(name: .noteproVimChanged, object: nil) }
                 Toggle(LZ("自動存檔"), isOn: $autoSave)
+                    .help(LZ("關閉後打字時不會自動存檔；切換檔案、關閉分頁或視窗、結束程式時仍會存檔，避免遺失。"))
                 Toggle(LZ("每週自動彙整待辦到 Daily Note"), isOn: $autoTodoDigest)
                 Toggle(LZ("編譯前先檢查語法"), isOn: $checkBeforeCompile)
                 HStack {
@@ -254,12 +255,16 @@ struct SettingsView: View {
             .padding().tabItem { Label(LZ("引用"), systemImage: "quote.opening") }
 
             Form {
-                TextField("Ollama 模型", text: $aiModel)
-                Text("每行一個 AI 指令：「標籤 | 提示內容」").font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $aiPresetsText)
-                    .font(.system(size: 12, design: .monospaced)).frame(minHeight: 110)
-                    .onChange(of: aiPresetsText) { _, _ in notifyConfig() }
+                AIPersonalSettings()
+                Section(LZ("⌘K 行內 AI（Ollama）")) {
+                    TextField("Ollama 模型", text: $aiModel)
+                    Text("每行一個 AI 指令：「標籤 | 提示內容」").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $aiPresetsText)
+                        .font(.system(size: 12, design: .monospaced)).frame(minHeight: 110)
+                        .onChange(of: aiPresetsText) { _, _ in notifyConfig() }
+                }
             }
+            .formStyle(.grouped)
             .padding().tabItem { Label(LZ("AI"), systemImage: "sparkles") }
 
             SnippetsEditor(text: $snippetsText, onChange: notifyConfig)
@@ -440,5 +445,96 @@ struct SnippetsEditor: View {
     }
     private func insertTabStop(_ idx: Int) {
         snips[idx].template += "${}"; commit()
+    }
+}
+
+
+/// Settings ▸ AI: the user's own writing style (learned from the vault), and
+/// the Zotero / NASA ADS tools the chat panel's AI can use.
+struct AIPersonalSettings: View {
+    @AppStorage("aiUseMyStyle") private var useStyle = true
+    @AppStorage("aiZoteroTools") private var zoteroTools = true
+    @AppStorage("adsToken") private var adsToken = ""
+    @State private var guide = ""
+    @State private var info: WritingStyle.Info?
+    @State private var busy = false
+    @State private var status = ""
+    @State private var zoteroUp: Bool?
+
+    private var vault: URL? { WritingStyle.activeVault }
+
+    var body: some View {
+        Section(LZ("我的文風")) {
+            Toggle(LZ("AI 寫作時用我的文風"), isOn: $useStyle)
+            Text(infoLine).font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $guide)
+                .font(.system(size: 12)).frame(minHeight: 150)
+            HStack {
+                Button(info == nil ? LZ("從我的筆記分析文風") : LZ("重新分析")) { analyze() }
+                    .disabled(busy || vault == nil)
+                Button(LZ("儲存修改")) { save() }
+                    .disabled(busy || vault == nil || guide.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if busy { ProgressView().controlSize(.small) }
+                Spacer()
+            }
+            if !status.isEmpty { Text(status).font(.caption) }
+        }
+        Section(LZ("AI 工具：Zotero 與 NASA ADS")) {
+            Toggle(LZ("讓聊天面板的 AI 自己查 Zotero / ADS"), isOn: $zoteroTools)
+            Label(zoteroUp == true ? LZ("Zotero 已連線") : zoteroUp == false
+                    ? LZ("Zotero 沒有開啟 — AI 會查不到你的文獻庫") : LZ("檢查 Zotero…"),
+                  systemImage: zoteroUp == true ? "checkmark.circle" : "exclamationmark.triangle")
+                .font(.caption)
+            Label(adsToken.isEmpty ? LZ("未設定 ADS token（設定 ▸ 引用）— 搜尋 ADS 與加入論文需要") : LZ("ADS token 已設定"),
+                  systemImage: adsToken.isEmpty ? "exclamationmark.triangle" : "checkmark.circle")
+                .font(.caption)
+            Text(LZ("AI 可以：搜尋你的 Zotero、讀摘要與書目、讀論文 PDF 全文、匯出 BibTeX、用 ADS / arXiv 找新文獻，以及把缺的論文加進 Zotero（每次都會先跳出視窗讓你確認）。引用時只會用你庫裡真正的 citekey。"))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onAppear { load(); pingZotero() }
+    }
+
+    private var infoLine: String {
+        guard vault != nil else { return LZ("請先開啟 vault") }
+        guard let info else { return LZ("還沒有文風指南。分析會從整個 vault 取樣你寫的段落，交給聊天面板目前的 AI 帳號整理；結果存在 vault 的 .notepro/ai/style.md，可以直接在下面修改。") }
+        return String(format: LZ("%@ 從 %d 份筆記分析 · 存在 .notepro/ai/style.md"), info.date, info.notes)
+    }
+
+    private func load() {
+        guard let vault else { return }
+        info = WritingStyle.info(vault: vault)
+        let raw = (try? String(contentsOf: WritingStyle.guideURL(vault: vault), encoding: .utf8)) ?? ""
+        guide = WritingStyle.stripFrontmatter(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func save() {
+        guard let vault else { return }
+        do { try WritingStyle.save(guide, vault: vault, notes: nil); status = LZ("已儲存") }
+        catch { status = error.localizedDescription }
+        info = WritingStyle.info(vault: vault)
+    }
+
+    private func analyze() {
+        guard let vault else { return }
+        guard let account = AIAccountStore.shared.active else {
+            status = LZ("請先在聊天面板登入 Claude 或 ChatGPT 帳號"); return
+        }
+        busy = true
+        status = String(format: LZ("正在用 %@ 分析你的筆記（約 1 分鐘）…"), account.label)
+        WritingStyle.generate(vault: vault, account: account) { result in
+            busy = false
+            switch result {
+            case .success(let n): load(); status = String(format: LZ("完成：從 %d 份筆記整理出文風指南"), n)
+            case .failure(let e): status = e.localizedDescription
+            }
+        }
+    }
+
+    private func pingZotero() {
+        guard let url = URL(string: "http://127.0.0.1:23119/connector/ping") else { return }
+        URLSession.shared.dataTask(with: url) { _, resp, _ in
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async { zoteroUp = ok }
+        }.resume()
     }
 }

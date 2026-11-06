@@ -1,10 +1,13 @@
 import SwiftUI
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 
 /// One window: a vault sidebar + an editor pane. The vault is shared across
 /// windows; selection and the editor are per-window.
 struct RootView: View {
+    /// What this window was opened with (a file to show, for "open in new window").
+    var seed: MainWindowSeed? = nil
     @EnvironmentObject var vault: VaultModel
     @EnvironmentObject var index: IndexService
     @EnvironmentObject var semIndex: SemanticIndex
@@ -16,6 +19,12 @@ struct RootView: View {
     @State private var selection = Set<URL>()
     @State private var modal: Modal?
     @State private var showClaudePane = false
+    /// This window's identity for MainWindowFocus (commands go to one window).
+    @State private var windowID = UUID()
+    /// The focused editor's file name. Followed through its publisher: this
+    /// view re-renders when tabs change, not when a tab opens another file,
+    /// so reading `tabs.active.displayName` directly left the title stale.
+    @State private var windowTitle = ""
 
     /// All modal sheets routed through ONE presentation slot (SwiftUI only
     /// reliably presents one `.sheet` per view).
@@ -56,7 +65,8 @@ struct RootView: View {
 
     var body: some View {
         observers(lifecycle(decorated(splitView)))
-            .navigationTitle(tabs.active.displayName)
+            .navigationTitle(windowTitle)
+            .onReceive(tabs.active.$displayName) { windowTitle = $0 }
             .sheet(item: $modal) { m in sheetView(m) }
             .overlay(alignment: .bottomTrailing) {
                 RecordingHUD(rec: recorder)
@@ -78,21 +88,17 @@ struct RootView: View {
                     if tabs.splitOn {
                         if tabs.splitVertical {
                             VSplitView {
-                                EditorPane().frame(minHeight: 160)
-                                SecondaryPane()
-                                    .environmentObject(tabs.secondary)
-                                    .frame(minHeight: 140)
+                                pane(tabs.left).frame(minHeight: 160)
+                                pane(tabs.right).frame(minHeight: 160)
                             }
                         } else {
                             HSplitView {
-                                EditorPane().frame(minWidth: 260)
-                                SecondaryPane()
-                                    .environmentObject(tabs.secondary)
-                                    .frame(minWidth: 240)
+                                pane(tabs.left).frame(minWidth: 300)
+                                pane(tabs.right).frame(minWidth: 300)
                             }
                         }
                     } else {
-                        EditorPane()
+                        pane(tabs.left)
                     }
                 }
                 .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
@@ -112,12 +118,31 @@ struct RootView: View {
         }
     }
 
+    /// One editor pane: its own tabs, its own active editor, the full toolbar.
+    private func pane(_ g: EditorGroup) -> some View {
+        EditorPane()
+            .environmentObject(g)
+            .environmentObject(g.active)
+    }
+
+    /// Commands meant for "the window I'm using" — every main window listens
+    /// to the same app-wide notifications, so the others must ignore them.
+    private func command(_ name: Notification.Name) -> AnyPublisher<Notification, Never> {
+        let id = windowID
+        return NotificationCenter.default.publisher(for: name)
+            .filter { _ in MainWindowFocus.isCurrent(id) }
+            .eraseToAnyPublisher()
+    }
+
     private func decorated<V: View>(_ v: V) -> some View {
         v.environmentObject(tabs)
             .environmentObject(tabs.active)   // active tab's editor as the EditorModel env
             .focusedSceneValue(\.editorModel, tabs.active)
             .focusedSceneValue(\.tabsModel, tabs)
             .preferredColorScheme(colorScheme)
+            .background(MainWindowTracker(id: windowID,
+                                          onWindow: { [weak tabs] w in tabs?.window = w },
+                                          onClose: { [weak tabs] in tabs?.flushAll() }))
     }
 
     private func lifecycle<V: View>(_ v: V) -> some View {
@@ -130,11 +155,11 @@ struct RootView: View {
             }
             broadcastNoteList()
             projects.reload(vault: vault.rootURL)
-            tabs.active.vaultRoot = vault.rootURL
-            tabs.secondary.vaultRoot = vault.rootURL
+            for e in tabs.allEditors { e.vaultRoot = vault.rootURL }
+            if let url = seed?.url { selection = [url]; tabs.open(url) }
         }
         .onChange(of: vault.rootURL) { _, root in
-            tabs.active.vaultRoot = root; tabs.secondary.vaultRoot = root
+            for e in tabs.allEditors { e.vaultRoot = root }
             projects.reload(vault: root)
         }
         .onChange(of: tabs.activeID) { _, _ in tabs.active.vaultRoot = vault.rootURL }
@@ -153,13 +178,18 @@ struct RootView: View {
             if newValue.count == 1, let url = newValue.first {
                 if url.pathExtension.lowercased() == "pdf" {
                     openWindow(id: "pdf", value: url)   // papers open in a reader window
+                } else if NSEvent.modifierFlags.contains(.option) {
+                    tabs.openToSide(url)                // ⌥-click: the other pane
                 } else {
-                    tabs.open(url)
+                    tabs.open(url)                      // the pane you're working in
                 }
             }
         }
         .onChange(of: tabs.activeID) { _, _ in
-            if let url = tabs.active.currentURL { selection = [url] }   // sync highlight
+            // Sync the highlight. A blank tab clears it — otherwise the file
+            // stays selected and clicking it again "changes" nothing, so it
+            // wouldn't open.
+            selection = tabs.active.currentURL.map { [$0] } ?? []
         }
     }
 
@@ -173,78 +203,81 @@ struct RootView: View {
         v.onReceive(NotificationCenter.default.publisher(for: .noteproRequestNoteList)) { _ in
             broadcastNoteList()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenWikilink)) { note in
+        .onReceive(command(.noteproOpenWikilink)) { note in
             guard let target = note.userInfo?["target"] as? String else { return }
             if let url = index.resolveNote(target) { selection = [url]; tabs.open(url) }
             else { tabs.active.statusText = "找不到筆記：\(target)" }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenDatabase)) { note in
+        .onReceive(command(.noteproOpenDatabase)) { note in
             flushDirtyEditors(); index.buildIfNeeded(vault)
             let folder = note.userInfo?["folder"] as? URL
             let title = (note.userInfo?["title"] as? String) ?? (folder?.lastPathComponent ?? "資料庫")
             modal = .database(DBTarget(folder: folder, title: title))
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenGraph)) { _ in
+        .onReceive(command(.noteproOpenGraph)) { _ in
             index.buildIfNeeded(vault); modal = .graph
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenHistory)) { _ in modal = .history }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenShortcuts)) { _ in modal = .shortcuts }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTranscribe)) { _ in modal = .transcribe }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLiterature)) { _ in
+        .onReceive(command(.noteproOpenHistory)) { _ in modal = .history }
+        .onReceive(command(.noteproOpenShortcuts)) { _ in modal = .shortcuts }
+        .onReceive(command(.noteproOpenTranscribe)) { _ in modal = .transcribe }
+        .onReceive(command(.noteproOpenLiterature)) { _ in
             index.buildIfNeeded(vault); modal = .literature
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenCowork)) { _ in modal = .cowork }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenLibrary)) { _ in
+        .onReceive(command(.noteproOpenCowork)) { _ in modal = .cowork }
+        .onReceive(command(.noteproOpenLibrary)) { _ in
             flushDirtyEditors(); index.buildIfNeeded(vault); modal = .library
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSearchReplace)) { _ in
+        .onReceive(command(.noteproOpenSearchReplace)) { _ in
             flushDirtyEditors(); index.buildIfNeeded(vault); modal = .searchReplace
         }
     }
 
     private func observers2<V: View>(_ v: V) -> some View {
-        v.onReceive(NotificationCenter.default.publisher(for: .noteproOpenInSplit)) { note in
+        v.onReceive(command(.noteproOpenInSplit)) { note in
             guard let url = note.userInfo?["url"] as? URL else { return }
-            tabs.splitOn = true
-            tabs.secondary.vaultRoot = vault.rootURL
-            tabs.secondary.open(url)
+            tabs.openToSide(url)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenInNewTab)) { note in
+        .onReceive(command(.noteproOpenInNewTab)) { note in
             guard let url = note.userInfo?["url"] as? URL else { return }
             selection = [url]
             tabs.open(url, inNewTab: true)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenInWindow)) { note in
+        .onReceive(command(.noteproOpenInWindow)) { note in
             guard let url = note.userInfo?["url"] as? URL else { return }
-            openWindow(id: "note", value: url)
+            // A full window of its own; if this window has the file, hand it
+            // over (saved) so it isn't open in two editors. If a third window
+            // already has it, go there instead of opening an empty window.
+            if tabs.showIfOpenElsewhere(url) { return }
+            tabs.release(url) { ok in
+                if ok { openWindow(id: "main", value: MainWindowSeed(url: url)) }
+            }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPreviewWindow)) { note in
+        .onReceive(command(.noteproOpenPreviewWindow)) { note in
             guard let url = note.userInfo?["url"] as? URL else { return }
             openWindow(id: "preview", value: url)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenSemantic)) { _ in modal = .semantic }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenPalette)) { note in
+        .onReceive(command(.noteproOpenSemantic)) { _ in modal = .semantic }
+        .onReceive(command(.noteproOpenPalette)) { note in
             modal = .palette(note.userInfo?["mode"] as? String ?? "files",
                              note.userInfo?["query"] as? String ?? "")
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenTodos)) { _ in
+        .onReceive(command(.noteproOpenTodos)) { _ in
             flushDirtyEditors(); index.buildIfNeeded(vault); modal = .todos
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteproFileRenamed)) { note in
             guard let old = note.userInfo?["old"] as? URL,
                   let new = note.userInfo?["new"] as? URL else { return }
-            for t in tabs.tabs { t.fileRenamed(from: old, to: new) }
-            tabs.secondary.fileRenamed(from: old, to: new)
+            for t in tabs.allEditors { t.fileRenamed(from: old, to: new) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproOpenClaudeCode)) { _ in
+        .onReceive(command(.noteproOpenClaudeCode)) { _ in
             // The panel itself explains a missing CLI / signed-out account.
             showClaudePane.toggle()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproPickFigure)) { note in
+        .onReceive(command(.noteproPickFigure)) { note in
             guard let key = note.userInfo?["citekey"] as? String, !key.isEmpty else { return }
             modal = .figures(key, note.userInfo?["title"] as? String ?? "")
         }
-        .onReceive(NotificationCenter.default.publisher(for: .noteproInsertIntoNote)) { note in
+        .onReceive(command(.noteproInsertIntoNote)) { note in
             // Only the main window that owns a note takes this (the PDF reader
             // is a separate window and can't reach the editor directly).
             guard let text = note.userInfo?["text"] as? String,
@@ -259,8 +292,7 @@ struct RootView: View {
                 guard let cur = e.currentURL?.standardizedFileURL.path else { return false }
                 return paths.isEmpty || paths.contains(cur)
             }
-            for t in tabs.tabs where hit(t) { t.reloadIfExternallyChanged() }
-            if hit(tabs.secondary) { tabs.secondary.reloadIfExternallyChanged() }
+            for t in tabs.allEditors where hit(t) { t.reloadIfExternallyChanged() }
         }
     }
 
@@ -269,8 +301,7 @@ struct RootView: View {
     /// otherwise they'd operate on a file missing the last ~2s of typing. The
     /// sheet blocks further typing, so flushing here closes the race window.
     private func flushDirtyEditors() {
-        for t in tabs.tabs { t.saveIfDirty() }
-        tabs.secondary.saveIfDirty()
+        for t in tabs.allEditors { t.saveIfDirty() }
     }
 
     @ViewBuilder
@@ -327,8 +358,7 @@ struct RootView: View {
             LiteratureLibraryView(
                 onOpen: { url in selection = [url]; tabs.open(url); modal = nil },
                 onChanged: { url in
-                    for t in tabs.tabs where t.currentURL == url { t.open(url) }
-                    if tabs.secondary.currentURL == url { tabs.secondary.open(url) }
+                    for t in tabs.allEditors where t.currentURL == url { t.open(url) }
                     index.forceRebuild(vault)
                 },
                 onClose: { modal = nil }
@@ -339,8 +369,7 @@ struct RootView: View {
                 onOpen: { url in selection = [url]; tabs.open(url); modal = nil },
                 onReplaced: { urls in
                     // Reload any open tab whose file we rewrote on disk.
-                    for t in tabs.tabs where t.currentURL.map(urls.contains) == true { if let u = t.currentURL { t.open(u) } }
-                    if tabs.secondary.currentURL.map(urls.contains) == true, let u = tabs.secondary.currentURL { tabs.secondary.open(u) }
+                    for t in tabs.allEditors where t.currentURL.map(urls.contains) == true { if let u = t.currentURL { t.open(u) } }
                     index.forceRebuild(vault)
                 },
                 onClose: { modal = nil }
@@ -361,8 +390,7 @@ struct RootView: View {
                               userInfo: ["url": url, "line": line]) }
                           modal = nil },
                 onChanged: { url in
-                    for t in tabs.tabs where t.currentURL == url { t.open(url) }
-                    if tabs.secondary.currentURL == url { tabs.secondary.open(url) }
+                    for t in tabs.allEditors where t.currentURL == url { t.open(url) }
                     index.forceRebuild(vault)
                 },
                 onClose: { modal = nil }

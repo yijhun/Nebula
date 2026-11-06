@@ -109,19 +109,127 @@ enum ZoteroService {
         }
     }
 
-    /// Export the given citekeys as biblatex (only those entries). Local BBT
-    /// first; Web API fallback when Zotero is closed.
-    static func exportBib(_ citekeys: [String], completion: @escaping (String) -> Void) {
-        let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
-        guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion("") }; return }
-        rpc("item.export", [keys, "biblatex"]) { result in
+    /// Export `keys` in `format`, tolerating keys the library doesn't have.
+    ///
+    /// Better BibTeX refuses a whole export when any one key is unknown
+    /// ("not found: …"). A note with a single stale citation then lost every
+    /// other citation's label in the preview, and its entire bibliography in
+    /// PDF export. So when the batch is refused, each key is exported on its
+    /// own and whatever resolves is kept. `chunks` are export payloads (one per
+    /// successful call); `reachable` is false only when Zotero didn't answer.
+    private static func exportTolerant(_ keys: [String], format: String,
+                                       completion: @escaping (_ chunks: [String], _ reachable: Bool) -> Void) {
+        rpc("item.export", [keys, format]) { result in
             switch result {
             case .success(let r):
-                DispatchQueue.main.async { completion((r as? String) ?? "") }
-            case .failure:
-                if ZoteroWeb.available { ZoteroWeb.exportBib(keys, completion: completion) }
-                else { DispatchQueue.main.async { completion("") } }
+                completion([(r as? String) ?? ""], true)
+            case .failure(let error):
+                if case ZError.notRunning = error { completion([], false); return }
+                guard keys.count > 1 else { completion([], true); return }
+                let group = DispatchGroup()
+                let lock = NSLock()
+                var chunks: [String] = []
+                for key in keys {
+                    group.enter()
+                    rpc("item.export", [[key], format]) { one in
+                        if case .success(let r) = one, let s = r as? String {
+                            lock.lock(); chunks.append(s); lock.unlock()
+                        }
+                        group.leave()
+                    }
+                }
+                group.notify(queue: .global()) { completion(chunks, true) }
             }
+        }
+    }
+
+    /// Which .bib dialect to export. biblatex styles read `date` and
+    /// `journaltitle`; classic .bst styles (ApJ's aasjournal, mnras, aa) only
+    /// read `year` and `journal`, and printed "????" for every year when fed
+    /// the biblatex export.
+    enum BibFormat { case biblatex, bibtex }
+
+    /// Export the given citekeys (only those entries). Local BBT first; Web
+    /// API fallback when Zotero is closed. Keys the library lacks are skipped
+    /// rather than emptying the whole bibliography.
+    static func exportBib(_ citekeys: [String], format: BibFormat = .biblatex,
+                          completion: @escaping (String) -> Void) {
+        let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
+        guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion("") }; return }
+        let translator = format == .bibtex ? "Better BibTeX" : "biblatex"
+        exportTolerant(keys, format: translator) { chunks, reachable in
+            if !reachable, ZoteroWeb.available { ZoteroWeb.exportBib(keys, completion: completion); return }
+            // A&A titles arrive with their footnote stars ("…Feedback⋆⋆⋆").
+            // They aren't part of the title, and Latin Modern has no ⋆ glyph,
+            // so they'd print as gaps in the reference list.
+            var bib = chunks.joined(separator: "\n")
+                .replacingOccurrences(of: "⋆", with: "")
+                .replacingOccurrences(of: "★", with: "")
+                .replacingOccurrences(of: "{$\\star$}", with: "")
+            if format == .bibtex { bib = abbreviateJournals(bib) }
+            DispatchQueue.main.async { completion(bib) }
+        }
+    }
+
+    /// Journal names as ApJ prints them. Zotero stores the full name
+    /// ("The Astrophysical Journal"); the .bst prints the field verbatim.
+    private static let journalAbbrev: [String: String] = [
+        "astrophysical journal": "ApJ",
+        "astrophysical journal letters": "ApJL",
+        "astrophysical journal. letters": "ApJL",
+        "astrophysical journal supplement series": "ApJS",
+        "astrophysical journal supplement": "ApJS",
+        "astronomical journal": "AJ",
+        "astronomy & astrophysics": "A\\&A",
+        "astronomy and astrophysics": "A\\&A",
+        "astronomy & astrophysics supplement series": "A\\&AS",
+        "astronomy and astrophysics supplement series": "A\\&AS",
+        "astronomy and astrophysics review": "A\\&ARv",
+        "monthly notices of the royal astronomical society": "MNRAS",
+        "annual review of astronomy and astrophysics": "ARA\\&A",
+        "publications of the astronomical society of the pacific": "PASP",
+        "publications of the astronomical society of japan": "PASJ",
+        "publications of the astronomical society of australia": "PASA",
+        "astrophysics and space science": "Ap\\&SS",
+        "space science reviews": "SSRv",
+        "nature astronomy": "NatAs",
+        "astronomische nachrichten": "AN",
+        "new astronomy": "NewA",
+        "new astronomy reviews": "NewAR",
+        "journal of quantitative spectroscopy and radiative transfer": "JQSRT",
+        "journal of molecular spectroscopy": "JMoSp",
+        "journal of physical and chemical reference data": "JPCRD",
+        "physical review letters": "PhRvL",
+        "physical review d": "PhRvD",
+        "reviews of modern physics": "RvMP",
+    ]
+
+    static func abbreviateJournals(_ bib: String) -> String {
+        guard let re = try? NSRegularExpression(
+            pattern: #"(?m)^(\s*journal\s*=\s*\{)(.*)(\},?\s*)$"#) else { return bib }
+        let ns = bib as NSString
+        var out = bib
+        for m in re.matches(in: bib, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let raw = ns.substring(with: m.range(at: 2))
+            var key = raw.replacingOccurrences(of: "{", with: "")
+                .replacingOccurrences(of: "}", with: "")
+                .replacingOccurrences(of: "\\&", with: "&")
+                .lowercased()
+                .trimmingCharacters(in: .whitespaces)
+            if key.hasPrefix("the ") { key.removeFirst(4) }
+            guard let abbr = journalAbbrev[key] else { continue }
+            let replaced = ns.substring(with: m.range(at: 1)) + abbr + ns.substring(with: m.range(at: 3))
+            out = (out as NSString).replacingCharacters(in: m.range, with: replaced)
+        }
+        return out
+    }
+
+    /// Parse Better CSL JSON export payloads into one list of records.
+    private static func cslRecords(_ chunks: [String]) -> [[String: Any]] {
+        chunks.flatMap { s -> [[String: Any]] in
+            guard let data = s.data(using: .utf8),
+                  let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+            return arr
         }
     }
 
@@ -129,15 +237,11 @@ enum ZoteroService {
     static func meta(_ citekeys: [String], completion: @escaping ([String: String]) -> Void) {
         let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
         guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion([:]) }; return }
-        rpc("item.export", [keys, "Better CSL JSON"]) { result in
+        exportTolerant(keys, format: "Better CSL JSON") { chunks, _ in
             var map: [String: String] = [:]
-            if case .success(let r) = result, let s = r as? String,
-               let data = s.data(using: .utf8),
-               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                for it in arr {
-                    guard let id = it["id"] as? String else { continue }
-                    map[id] = label(for: it)
-                }
+            for it in cslRecords(chunks) {
+                guard let id = it["id"] as? String else { continue }
+                map[id] = label(for: it)
             }
             DispatchQueue.main.async { completion(map) }
         }
@@ -148,12 +252,11 @@ enum ZoteroService {
     static func fullMeta(_ citekeys: [String], completion: @escaping ([String: ZoteroMeta]) -> Void) {
         let keys = Array(Set(citekeys)).filter { !$0.isEmpty }
         guard enabled, !keys.isEmpty else { DispatchQueue.main.async { completion([:]) }; return }
-        rpc("item.export", [keys, "Better CSL JSON"]) { result in
+        exportTolerant(keys, format: "Better CSL JSON") { chunks, _ in
             // Rich parse needs Better BibTeX's CSL export; if Zotero is closed we
             // just return nothing (the caller keeps whatever it already had).
-            let map: [String: ZoteroMeta]
-            if case .success(let r) = result, let s = r as? String { map = parseCSL(s) }
-            else { map = [:] }
+            var map: [String: ZoteroMeta] = [:]
+            for chunk in chunks { map.merge(parseCSL(chunk)) { a, _ in a } }
             DispatchQueue.main.async { completion(map) }
         }
     }

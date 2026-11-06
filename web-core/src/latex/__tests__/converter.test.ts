@@ -27,9 +27,10 @@ describe("inline formatting", () => {
     );
   });
   it("maps headings by depth", () => {
-    expect(body("# A")).toContain("\\section{A}");
-    expect(body("## B")).toContain("\\subsection{B}");
-    expect(body("### C")).toContain("\\subsubsection{C}");
+    const b = body("# A\n\n## B\n\n### C");
+    expect(b).toContain("\\section{A}");
+    expect(b).toContain("\\subsection{B}");
+    expect(b).toContain("\\subsubsection{C}");
   });
   it("maps links to \\href", () => {
     expect(body("[txt](http://x.com)")).toContain("\\href{http://x.com}{txt}");
@@ -192,5 +193,50 @@ describe("convert (end-to-end)", () => {
     const r = convert("---\ntitle: 100% sure\n---\ncost & risk", { template: "article" });
     expect(r.tex).toContain("\\title{100\\% sure}");
     expect(r.tex).toContain("cost \\& risk");
+  });
+});
+
+describe("heading levels", () => {
+  it("a note without # maps its top level (##) to \\section — no 0.1 numbering", () => {
+    const { tex } = convert("## Disk\n\n### Density\n\nText.\n");
+    expect(tex).toContain("\\section{Disk}");
+    expect(tex).toContain("\\subsection{Density}");
+    expect(tex).not.toContain("\\subsubsection{Density}");
+  });
+  it("a note that uses # is unchanged", () => {
+    const { tex } = convert("# Intro\n\n## Disk\n\nText.\n");
+    expect(tex).toContain("\\section{Intro}");
+    expect(tex).toContain("\\subsection{Disk}");
+  });
+});
+
+describe("ApJ-style references", () => {
+  it("academic cites author–year with natbib + aasjournal, classic BibTeX", () => {
+    const r = convert("Infall [@ulrich1976].\n", { template: "academic" });
+    expect(r.tex).toContain("\\citep{ulrich1976}");
+    expect(r.tex).toContain("\\usepackage{natbib}");
+    expect(r.tex).toContain("\\setcitestyle{aysep={}}");
+    expect(r.tex).toContain("\\bibliographystyle{aasjournal}");
+    expect(r.tex).not.toContain("biblatex");
+    expect(r.bibFormat).toBe("bibtex");
+    // set like a journal's reference list: packed and single-spaced
+    expect(r.tex).toContain("\\setlength{\\bibsep}{0pt}");
+    expect(r.tex).toContain("\\singlespacing");
+  });
+  it("journal classes keep their own natbib (no second \\usepackage)", () => {
+    const r = convert("Infall [@ulrich1976].\n", { template: "apj" });
+    expect(r.tex).not.toContain("\\usepackage{natbib}");
+    expect(r.bibFormat).toBe("bibtex");
+  });
+  it("beamer stays on biblatex", () => {
+    expect(convert("x [@a].\n", { template: "beamer" }).bibFormat).toBe("biblatex");
+  });
+  it("drops an empty trailing References heading (the bibliography prints its own)", () => {
+    const { tex } = convert("## Disk\n\nText [@a].\n\n## References\n", { template: "academic" });
+    expect(tex).not.toMatch(/\\section\{References\}/);
+  });
+  it("keeps a References heading that has content under it", () => {
+    const { tex } = convert("## Disk\n\nText.\n\n## References\n\nHand-written list.\n");
+    expect(tex).toMatch(/\\section\{References\}/);
   });
 });

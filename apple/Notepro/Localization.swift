@@ -130,6 +130,13 @@ let EN: [String: String] = [
     "貼上為圖片 Paste as Image": "Paste as Image",
     "用 Claude Code 開啟 vault": "Open Vault in Claude Code",
     "對話": "Chat", "附加": "Attach", "選擇資料夾": "Choose folder",
+    "移到另一側": "Move to Other Side", "移到另一側 Move to Other Side": "Move to Other Side",
+    "移到新視窗": "Move to New Window", "有檔案無法儲存": "Some files couldn't be saved", "不要結束": "Don't Quit", "關閉後打字時不會自動存檔；切換檔案、關閉分頁或視窗、結束程式時仍會存檔，避免遺失。": "When off, nothing is saved while you type; switching files, closing a tab or window, and quitting still save, so nothing is lost.", "仍要結束": "Quit Anyway", "無法儲存，分頁沒有關閉": "Couldn't save — the tab was kept open", "右側編輯區": "Right pane",
+    "點一下這裡，再到側邊欄點檔案，就會開在這一側": "Click here, then pick a file in the sidebar — it opens on this side",
+    "在側邊欄按住 ⌥ 點檔案：直接開到另一側": "⌥-click a file in the sidebar to open it on the other side",
+    "或把檔案、分頁拖到這裡": "Or drag a file or tab here",
+    "拖分頁或檔案到此並排": "Drop a tab or file here to open it side by side", "儲存": "Save",
+    "改為左右分割": "Split left | right", "改為上下分割": "Split top / bottom", "關閉分割": "Close split",
     "AI 對話面板": "AI Chat Panel",
     "終端": "Terminal",
     "關閉側欄（對話保留）": "Close pane (conversation kept)",
@@ -194,4 +201,12 @@ let EN: [String: String] = [
     "草稿 (.md)": "Drafts (.md)", "正式稿 (.tex)": "Formal (.tex)",
     // Common
     "就緒 Ready": "Ready", "未命名": "Untitled", "新文件 Untitled": "Untitled",
+    // Save guard
+    "這次儲存會取代這個檔案幾乎全部的內容": "This save would replace almost all of this file",
+    "檔案目前沒有被改動，編輯器裡的新文字已存入版本歷史。": "The file hasn't been changed. The text in the editor has been kept in version history.",
+    "保留原檔案": "Keep the Original File", "用新內容取代": "Replace with the New Text",
+    "有一次儲存沒有寫入檔案": "A save wasn't written to the file",
+    "檔案維持原樣，那段文字可以在版本歷史找到。": "The file was left as it was. The text is in version history.",
+    "編輯器裡的文字和另一個檔案完全相同": "The text in the editor is identical to another file",
+    "編輯器裡的文字幾乎不包含這個檔案原本的內容。": "The text in the editor contains almost none of this file's content.",
 ]

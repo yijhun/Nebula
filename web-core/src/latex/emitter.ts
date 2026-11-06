@@ -43,6 +43,8 @@ export interface EmitContext {
   features: Set<Feature>;
   footnotes: Map<string, FootnoteDefinition>;
   citeStyle: CiteStyle;
+  /** Levels to lift every heading by — see `emit`. */
+  headingShift: number;
 }
 
 export interface EmitResult {
@@ -88,6 +90,7 @@ function newContext(citeStyle: CiteStyle): EmitContext {
     features: new Set(),
     footnotes: new Map(),
     citeStyle,
+    headingShift: 0,
   };
 }
 
@@ -133,7 +136,7 @@ function emitInline(
 }
 
 function emitHeading(node: Heading, ctx: EmitContext): string {
-  const cmd = HEADING_CMD[node.depth - 1] ?? "\\paragraph";
+  const cmd = HEADING_CMD[node.depth - 1 - ctx.headingShift] ?? "\\paragraph";
   return `${cmd}{${emitInline(node.children, ctx)}}\n\n`;
 }
 
@@ -361,6 +364,26 @@ function emitNode(node: RootContent | Root, ctx: EmitContext): string {
 /** Convert an augmented mdast tree into a LaTeX body string. */
 export function emit(tree: Root, opts: { citeStyle?: CiteStyle } = {}): EmitResult {
   const ctx = newContext(opts.citeStyle ?? "biblatex");
+  // Map headings relative to the shallowest level the note uses. A note that
+  // never uses `#` (its sections are `##`) otherwise had no \section at all,
+  // and every number came out as "0.1", "0.0.1" in the PDF.
+  const depths: number[] = [];
+  const collect = (n: { type: string; depth?: number; children?: unknown[] }): void => {
+    if (n.type === "heading" && n.depth) depths.push(n.depth);
+    (n.children as typeof n[] | undefined)?.forEach(collect);
+  };
+  collect(tree as Parameters<typeof collect>[0]);
+  if (depths.length) ctx.headingShift = Math.min(...depths) - 1;
+  // A note that ends with an empty "## References" heading is marking where
+  // the bibliography goes — which prints its own title, so keeping the
+  // heading gave "References" twice. Only an EMPTY trailing one is dropped.
+  const last = tree.children[tree.children.length - 1];
+  if (last?.type === "heading") {
+    const text = last.children.map((c) => ("value" in c ? String(c.value) : "")).join("").trim();
+    if (/^(references|bibliography|參考文獻|参考文献)$/i.test(text)) {
+      tree = { ...tree, children: tree.children.slice(0, -1) };
+    }
+  }
   // Pre-index footnote definitions so references can inline them.
   for (const child of tree.children) {
     if (child.type === "footnoteDefinition") {

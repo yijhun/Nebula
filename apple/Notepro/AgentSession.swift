@@ -86,11 +86,18 @@ final class AgentSession {
                  "--output-format", "stream-json",
                  "--verbose",
                  "--include-partial-messages",
-                 "--permission-mode", mode == .readOnly ? "plan" : "acceptEdits",
-                 "--append-system-prompt", Self.systemNote]
+                 "--permission-mode", mode == .readOnly ? "default" : "acceptEdits"]
+        // Read-only is "default" mode with the editing tools removed, not
+        // "plan": plan mode also blocks every MCP tool, so the AI couldn't
+        // look anything up in Zotero. (Verified: in default mode a -p session
+        // has no one to grant permission, so a writing Bash command is
+        // refused too.)
+        if mode == .readOnly { a += ["--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit"] }
+        a += ["--append-system-prompt", systemNote]
         if let m = model, !m.isEmpty { a += ["--model", m] }
         for d in extraDirs { a += ["--add-dir", d] }
         if let r = resumeID { a += ["--resume", r] }
+        a += NebulaMCP.claudeArgs()          // Zotero / ADS tools
         return a
     }
 
@@ -103,12 +110,20 @@ final class AgentSession {
               "-C", cwd.path]
         if let m = model, !m.isEmpty { a += ["-m", m] }
         for d in extraDirs { a += ["--add-dir", d] }
-        a += ["\(Self.systemNote)\n\n\(prompt)"]
+        a += NebulaMCP.codexArgs()           // Zotero / ADS tools
+        a += ["\(systemNote)\n\n\(prompt)"]
         return a
     }
 
-    private static let systemNote =
+    private static let baseNote =
         "You are running inside Nebula, a Markdown/LaTeX research-notes app; the working directory is the user's notes vault. Reply in the user's language. Write math as $…$ / $$…$$."
+
+    /// Base instructions + the Zotero/ADS tool rules + the user's own style
+    /// guide (learned from this vault), each when enabled in Settings.
+    private var systemNote: String {
+        [Self.baseNote, NebulaMCP.instruction, WritingStyle.instruction(vault: cwd)]
+            .compactMap { $0 }.joined(separator: "\n\n")
+    }
 
     // MARK: - process
 

@@ -4,41 +4,6 @@ import UniformTypeIdentifiers
 
 
 
-/// A standalone single-note window (drag/right-click ▸ 在新視窗開啟). Lightweight:
-/// just an editor + view-mode picker + save, no sidebar/tabs. Good for editing
-/// or displaying a second note on another screen.
-struct NoteWindowView: View {
-    let url: URL
-    @EnvironmentObject var vault: VaultModel
-    @StateObject private var editor = EditorModel()
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(editor.displayName).font(.callout.weight(.medium)).lineLimit(1)
-                Spacer()
-                Picker("", selection: $editor.viewMode) {
-                    ForEach(editor.availableViewModes, id: \.self) { m in Text(LZ(m.label)).tag(m) }
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                Button { editor.save() } label: { Image(systemName: "square.and.arrow.down") }
-                    .buttonStyle(.borderless).help("儲存 (⌘S)")
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.bar)
-            Divider()
-            WebView().environmentObject(editor)
-        }
-        .onAppear {
-            editor.vaultRoot = vault.rootURL
-            editor.open(url)
-        }
-        .navigationTitle(editor.displayName)
-        .focusedSceneValue(\.editorModel, editor)
-    }
-}
-
-
 /// A pop-out LIVE preview window (right-side HTML preview detached). Read-only:
 /// it opens the note in preview mode and live-updates as the source editor
 /// broadcasts content (debounced) — drag it to another screen to watch the

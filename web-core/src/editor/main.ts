@@ -10,7 +10,7 @@ import { EditorState, Compartment } from "@codemirror/state";
 import {
   EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from "@codemirror/search";
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
@@ -28,6 +28,8 @@ import { latexToMarkdown } from "../latex/to-markdown.js";
 import { lintLatex } from "./lint.js";
 import { skeletonFor } from "../latex/builtin-templates.js";
 import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from "./preview.js";
+import { guessCiteLabel } from "./citeLabel.js";
+import { replaceDocument, undoHistory } from "./loadDocument.js";
 import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
@@ -99,15 +101,8 @@ function applyLivePreview(): void {
 const citeLabels = new Map<string, string>();
 const citePending = new Set<string>();
 
-/** Fallback label parsed from a BBT citekey, e.g. "chen…1997" → "Chen (1997)". */
-function heuristicCiteLabel(key: string): string {
-  const a = /^([A-Za-z][a-z]+)/.exec(key);
-  const y = /(\d{4})/.exec(key);
-  const author = a ? a[1]!.charAt(0).toUpperCase() + a[1]!.slice(1) : key;
-  return y ? `${author} (${y[1]})` : key;
-}
 setCiteLabelResolver((k) =>
-  getConfig().previewCiteStyle === "citekey" ? k : (citeLabels.get(k) ?? heuristicCiteLabel(k)),
+  getConfig().previewCiteStyle === "citekey" ? k : (citeLabels.get(k) ?? guessCiteLabel(k)),
 );
 
 /** Fetch real "Author et al. (year)" labels for any keys not yet cached. */
@@ -306,14 +301,23 @@ function renderTexSource(): void {
   previewEl.replaceChildren(pre);
 }
 
+/** Identifies the last load from the host; see getContentIf. */
+let bufferToken = 0;
+
 const api = {
-  setContent(text: string): void {
+  /** `keepUndo` is for rewriting the SAME document (an applied AI fix), where
+   * undo is meaningful; opening or reloading a file resets the undo history. */
+  setContent(text: string, keepUndo = false, token = bufferToken): void {
     // Programmatic replace (open/reload from the host) must NOT read as a user
     // edit: a spurious "dirty" makes the host think there are unsaved changes
     // and schedule an auto-save right after every document switch.
     suppressDirty = true;
     try {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+      if (keepUndo) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+      else replaceDocument(view, text);
+      // Only after the text is really in: a load that throws leaves the old
+      // token, and getContentIf then refuses to hand the old text to a save.
+      bufferToken = token;
     } finally {
       suppressDirty = false;
     }
@@ -323,6 +327,11 @@ const api = {
   },
   getContent(): string {
     return view.state.doc.toString();
+  },
+  /** The buffer, but only if it holds the document the host thinks it does:
+   * null when the host's last load never arrived. Every save reads through this. */
+  getContentIf(token: number): string | null {
+    return token === bufferToken ? view.state.doc.toString() : null;
   },
   /** Jump the editor's cursor to a 1-indexed line and scroll it into view —
    * used by SyncTeX reverse (PDF click → editor) from the native shell. */
@@ -422,7 +431,7 @@ const api = {
       defaultTemplate: getConfig().defaultTemplate,
       ...(templateId ? { template: templateId } : {}),
     });
-    return JSON.stringify({ tex: r.tex, bib: r.bib, keys: r.citationKeys });
+    return JSON.stringify({ tex: r.tex, bib: r.bib, keys: r.citationKeys, bibFormat: r.bibFormat });
   },
   /** Convert the current LaTeX doc back to Obsidian-flavored Markdown. */
   fromLatex(): string {
@@ -923,7 +932,7 @@ function boot(): void {
       extensions: [
         vimCompartment.of([]),           // Vim mode (toggled via settings) — highest precedence
         lineNumbers(), highlightActiveLine(), drawSelection(),
-        history(),
+        undoHistory,
         search({ top: true }), highlightSelectionMatches(),
         lintGutter(), latexLinter,
         latexAutocomplete,

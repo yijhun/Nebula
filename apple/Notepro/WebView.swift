@@ -9,6 +9,20 @@ import UniformTypeIdentifiers
 final class ImageDropWebView: WKWebView {
     /// Called with raw image bytes + a suggested filename extension.
     var onImageData: ((Data, String) -> Void)?
+    /// Called when this editor takes keyboard focus or is clicked — how a
+    /// split window learns which pane the user is working in. (WKWebView eats
+    /// mouse events, so SwiftUI tap gestures on the pane never fire.)
+    var onFocus: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocus?() }
+        return ok
+    }
+    override func mouseDown(with event: NSEvent) {
+        onFocus?()
+        super.mouseDown(with: event)
+    }
 
     private static let dataTypes: [NSPasteboard.PasteboardType] =
         [.pdf, .png, .tiff]
@@ -161,7 +175,23 @@ struct WebView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    /// The editor's web view lives as long as its `EditorModel`, not as long
+    /// as this SwiftUI view. Toggling the split or flipping its orientation
+    /// rebuilds the panes; a fresh web view would boot with the welcome
+    /// document while the model still points at your file — losing unsaved
+    /// typing, and letting the next autosave write the wrong text into it.
+    /// Instead each rebuild re-hosts the same web view in a new container.
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        let web = model.hostedWebView ?? makeWebView(context: context)
+        web.removeFromSuperview()
+        web.frame = container.bounds
+        web.autoresizingMask = [.width, .height]
+        container.addSubview(web)
+        return container
+    }
+
+    private func makeWebView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.userContentController.add(context.coordinator, name: "notepro")
         // Serve vault images to the (file://) preview via a custom scheme,
@@ -174,6 +204,10 @@ struct WebView: NSViewRepresentable {
         webView.onImageData = { [weak model] data, ext in
             model?.saveImageBytes(data, ext: ext)
         }
+        webView.onFocus = { [weak model] in
+            guard let model else { return }
+            NotificationCenter.default.post(name: .noteproEditorFocused, object: model)
+        }
         model.attach(webView)
 
         if let url = Bundle.main.url(forResource: "index", withExtension: "html") {
@@ -182,10 +216,13 @@ struct WebView: NSViewRepresentable {
         return webView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {}
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-        let model: EditorModel
+        // Weak: the model owns the web view, which (through its content
+        // controller) owns this coordinator — a strong link back would leak
+        // every closed tab.
+        weak var model: EditorModel?
         init(model: EditorModel) { self.model = model }
 
         func userContentController(
@@ -196,11 +233,12 @@ struct WebView: NSViewRepresentable {
                 let body = message.body as? [String: Any],
                 let type = body["type"] as? String
             else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let model = self?.model else { return }
                 if type == "rpc" {
-                    self.model.handleRPC(body)
+                    model.handleRPC(body)
                 } else {
-                    self.model.handleMessage(body)
+                    model.handleMessage(body)
                 }
             }
         }
