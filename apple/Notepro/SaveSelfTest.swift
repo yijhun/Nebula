@@ -150,8 +150,20 @@ enum SaveSelfTest {
 
         print("Switching files")
         type(model, "last words. ")
-        model.open(kenyon); spin(0.4)
-        check(read(physics).contains("last words. "), "unsaved edits reach the file being left")
+        // The save on leaving runs only if the "dirty" message has arrived, and
+        // it lands asynchronously. Wait for the text rather than a fixed time
+        // (slow CI machines), and on failure say which of the two went wrong.
+        let dirtyAtSwitch = model.isDirty
+        let switched = Date()
+        model.open(kenyon)
+        let reached = wait(5) { read(physics).contains("last words. ") }
+        let took = Date().timeIntervalSince(switched)
+        check(reached, "unsaved edits reach the file being left")
+        if !reached {
+            print("        edit registered (isDirty) at switch: \(dirtyAtSwitch); held: \(held); status: \(model.statusText)")
+        } else if took > 0.4 {
+            print("        note: took \(String(format: "%.2f", took)) s to reach the file")
+        }
         check(!read(kenyon).contains("last words. "), "and not the file being opened")
         check(js(model, "window.notepro.getContent()") as? String == read(kenyon), "the editor shows the new file")
 
