@@ -23,7 +23,8 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     ENABLE_HARDENED_RUNTIME: "NO"
     ENABLE_APP_SANDBOX: "NO"
-    MARKETING_VERSION: "0.1"
+    MARKETING_VERSION: "0.3"
+    CURRENT_PROJECT_VERSION: "3"
 targets:
   Nebula:
     type: application
@@ -59,6 +60,9 @@ targets:
       properties:
         CFBundleDisplayName: Nebula
         CFBundleIconFile: AppIcon
+        # xcodegen writes 1.0 / 1 here unless told otherwise.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
