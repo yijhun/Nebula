@@ -32,6 +32,7 @@ import { guessCiteLabel } from "./citeLabel.js";
 import { replaceDocument, undoHistory } from "./loadDocument.js";
 import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
+import { syntaxColors } from "./syntaxColors.js";
 import { tableOp as runTableOp, type TableOp } from "./table.js";
 import { openChartStudio, insertTikzBelow } from "./chartStudio.js";
 import { chartToTikz } from "./chartTikz.js";
@@ -80,6 +81,7 @@ const langCompartment = new Compartment();
 const themeCompartment = new Compartment();
 const vimCompartment = new Compartment();
 const lpCompartment = new Compartment();   // inline Live Preview (on in "live" mode)
+const synCompartment = new Compartment();  // source syntax colours (settings toggle)
 
 // lang-markdown already provides Obsidian-style folding (heading sections via its
 // `headerIndent` foldService + block/code folding via foldNodeProp); codeFolding()
@@ -122,9 +124,16 @@ function ensureCiteLabels(keys: string[]): void {
     .catch(() => missing.forEach((k) => citePending.delete(k)));
 }
 
-/** Apply font size / family / line-height from config via CSS variables. */
+/** Source syntax colours: math / cite / link / command / heading / fence. */
+const syntaxColorsExt = syntaxColors({ get: () => mode });
+function syntaxColorsWanted(): typeof syntaxColorsExt | [] {
+  return getConfig().syntaxColors ? syntaxColorsExt : [];
+}
+
+/** Apply font size / family / line-height (CSS variables) and the syntax-colour toggle. */
 function applyAppearance(): void {
   const c = getConfig();
+  if (view) view.dispatch({ effects: synCompartment.reconfigure(syntaxColorsWanted()) });
   const root = document.documentElement.style;
   root.setProperty("--np-font-size", `${c.fontSize}px`);
   root.setProperty("--np-font-family", c.fontFamily);
@@ -954,6 +963,9 @@ function boot(): void {
         // (`mode` here is the closure-captured top-level var that changes as
         // the user switches md ⇄ tex.)
         unmatchedBrackets({ get: () => mode }),
+        // Distinct colours for math, citations, wikilinks, LaTeX commands,
+        // headings and code fences (display only — never edits the text).
+        synCompartment.of(syntaxColorsWanted()),
         keymap.of([
           { key: "Mod-k", run: (v) => { openAI(v); return true; } },
           { key: "Mod-Shift-k", run: () => { openCite((k) => api.insertCitation(k)); return true; } },

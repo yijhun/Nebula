@@ -21,6 +21,8 @@ export interface NoteproConfig {
   snippets: SnippetCfg[];
   /** Default Markdown→LaTeX template when a note has no frontmatter `template`. */
   defaultTemplate: string;
+  /** Colour math / citations / links / commands / headings / fences in the source. */
+  syntaxColors: boolean;
 }
 
 export const DEFAULT_CONFIG: NoteproConfig = {
@@ -44,6 +46,7 @@ export const DEFAULT_CONFIG: NoteproConfig = {
   lineHeight: 1.6,
   snippets: [],
   defaultTemplate: "apj",
+  syntaxColors: true,
 };
 
 let current: NoteproConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));

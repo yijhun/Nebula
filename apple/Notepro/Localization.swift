@@ -89,6 +89,7 @@ let EN: [String: String] = [
     "自動存檔": "Auto-save",
     "編譯前先檢查語法": "Check syntax before compiling",
     "附件預設位置": "Attachment location", "附件資料夾名稱": "Attachment folder name",
+    "語法上色（數學、引用、連結、指令、標題、程式碼）": "Syntax colours (math, citations, links, commands, headings, code)",
     "指定資料夾": "Specified folder", "同筆記資料夾": "Same folder as note", "Vault 根目錄": "Vault root",
     "版本歷史 History": "Version History",
     "還原最近的乾淨 Markdown 版本": "Restore Latest Clean Markdown",
