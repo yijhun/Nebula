@@ -64,6 +64,14 @@ jobs:
           path: ~/Library/Caches/Tectonic
           key: tectonic-${{ runner.os }}-${{ hashFiles('web-core/scripts/e2e-compile.mts', 'web-core/src/latex/**', 'demo-vault/**') }}
           restore-keys: tectonic-${{ runner.os }}-
+      # ctex picks its macOS font set by whether PingFang.ttc is at this path,
+      # and some CJK fonts are download-on-demand. Logged for the `cjk` case.
+      - name: CJK fonts on this runner
+        run: |
+          ls -la /System/Library/Fonts/PingFang.ttc || true
+          find /System/Library/Fonts /System/Library/AssetsV2 /Library/Fonts \
+            \( -iname '*songti*' -o -iname '*kaiti*' -o -iname 'STHeiti*' -o -iname 'PingFang*' \) \
+            -exec ls -la {} \; 2>/dev/null || true
       - name: Compile corpus
         working-directory: web-core
         env:
