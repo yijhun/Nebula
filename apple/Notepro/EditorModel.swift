@@ -1454,7 +1454,7 @@ final class EditorModel: ObservableObject, Identifiable {
     private var autoSaveWork: DispatchWorkItem?
     private var autoSaveEnabled: Bool { UserDefaults.standard.object(forKey: "autoSave") as? Bool ?? true }
     /// URL whose unsaved edits are being flushed to disk right now (see open()).
-    private var flushingURL: URL?
+    private(set) var flushingURL: URL?   // readable so SaveSelfTest can wait for the flush
     /// An open() that arrived while its target was mid-flush; run after landing.
     private var deferredOpenURL: URL?
 
