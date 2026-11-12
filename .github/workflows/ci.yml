@@ -72,6 +72,12 @@ jobs:
           find /System/Library/Fonts /System/Library/AssetsV2 /Library/Fonts \
             \( -iname '*songti*' -o -iname '*kaiti*' -o -iname 'STHeiti*' -o -iname 'PingFang*' \) \
             -exec ls -la {} \; 2>/dev/null || true
+      # ctex's macOS fonts (STHeiti, STXihei, STKaiti, STFangsong) are
+      # download-on-demand. Missing, XeTeX's lookup blocks forever waiting on
+      # the font service (every CJK case, charts too, hit the 180 s limit).
+      - name: Download on-demand CJK fonts
+        timeout-minutes: 6
+        run: swift .github/scripts/fetch-cjk-fonts.swift 300
       - name: Compile corpus
         working-directory: web-core
         env:
