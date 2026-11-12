@@ -64,24 +64,16 @@ jobs:
           path: ~/Library/Caches/Tectonic
           key: tectonic-${{ runner.os }}-${{ hashFiles('web-core/scripts/e2e-compile.mts', 'web-core/src/latex/**', 'demo-vault/**') }}
           restore-keys: tectonic-${{ runner.os }}-
-      # ctex picks its macOS font set by whether PingFang.ttc is at this path,
-      # and some CJK fonts are download-on-demand. Logged for the `cjk` case.
-      - name: CJK fonts on this runner
-        run: |
-          ls -la /System/Library/Fonts/PingFang.ttc || true
-          find /System/Library/Fonts /System/Library/AssetsV2 /Library/Fonts \
-            \( -iname '*songti*' -o -iname '*kaiti*' -o -iname 'STHeiti*' -o -iname 'PingFang*' \) \
-            -exec ls -la {} \; 2>/dev/null || true
-      # ctex's macOS fonts (STHeiti, STXihei, STKaiti, STFangsong) are
-      # download-on-demand. Missing, XeTeX's lookup blocks forever waiting on
-      # the font service (every CJK case, charts too, hit the 180 s limit).
-      - name: Download on-demand CJK fonts
-        timeout-minutes: 6
-        run: swift .github/scripts/fetch-cjk-fonts.swift 300
       - name: Compile corpus
         working-directory: web-core
         env:
           E2E_ONLINE: ${{ steps.tectonic-cache.outputs.cache-hit == 'true' && '0' || '1' }}
+          # ctex's macOS fonts (STHeiti, STXihei, STKaiti, STFangsong) are
+          # download-on-demand, and on the runner the font service never
+          # answers for them: looking one up, or even asking where its file
+          # is, blocks forever (CFMessagePortSendRequest). So CJK uses the
+          # Fandol fonts from the TeX bundle here; the LaTeX is unchanged.
+          E2E_CTEX_FONTSET: fandol
         run: npm run e2e
 
   macos-app:

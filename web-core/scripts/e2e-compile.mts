@@ -19,6 +19,19 @@ const OFFLINE = "http://127.0.0.1:1";
 // E2E_ONLINE=1 lets Tectonic download what it lacks (CI does this when its
 // Tectonic cache is cold). Default stays cache-only, see compile().
 const ONLINE = process.env.E2E_ONLINE === "1";
+// E2E_CTEX_FONTSET=fandol makes ctex use the Fandol fonts from the TeX bundle
+// instead of its macOS set (STHeiti, STKaiti, … — download-on-demand system
+// fonts). On a GitHub runner those aren't downloaded and the macOS font
+// service never answers for them, so any lookup blocks forever. The LaTeX
+// compiled is unchanged: this only drops a ctexopts.cfg next to it, which
+// ctex reads before its options. Unset (local runs), the real macOS fonts.
+const CTEX_FONTSET = process.env.E2E_CTEX_FONTSET;
+function writeCtexOpts(dir: string): void {
+  if (CTEX_FONTSET) writeFileSync(`${dir}/ctexopts.cfg`,
+    // \ProvidesExplFile turns on expl3 syntax, as in ctex's own ctexopts.cfg.
+    `\\ProvidesExplFile{ctexopts.cfg}{2026/11/12}{0}{e2e font set}\n` +
+    `\\ctex_set:nn { option } { fontset = ${CTEX_FONTSET} }\n`);
+}
 
 const BIB = `@article{balbus1991, title={A powerful local shear instability}, author={Balbus, S. and Hawley, J.}, journal={ApJ}, year={1991}, volume={376}, pages={214}}
 @article{ulrich1976, title={An infall model}, author={Ulrich, R.}, journal={ApJ}, year={1976}, volume={210}, pages={377}}
@@ -126,6 +139,7 @@ for (const c of CASES) {
   const r = convert(c.md, { bibBackend: "bibtex", ...(c.opts ?? {}) });
   writeFileSync(`${dir}/${c.name}.tex`, r.tex);
   writeFileSync(`${dir}/references.bib`, BIB);
+  writeCtexOpts(dir);
   const t0 = Date.now();
   const err = await compile(dir, c.name);
   const secs = `(${((Date.now() - t0) / 1000).toFixed(1)}s)`;
@@ -144,6 +158,7 @@ for (const c of CASES) {
   for (const ch of r.chapters) writeFileSync(`${dir}/chapters/${ch.name}`, ch.body);
   writeFileSync(`${dir}/paper.tex`, r.master);
   writeFileSync(`${dir}/references.bib`, BIB);
+  writeCtexOpts(dir);
   const t0 = Date.now();
   const err = await compile(dir, "paper");
   const secs = `(${((Date.now() - t0) / 1000).toFixed(1)}s)`;
