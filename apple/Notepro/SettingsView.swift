@@ -58,6 +58,7 @@ struct SettingsView: View {
     @AppStorage("fontSize") private var fontSize = 14.0
     @AppStorage("lineHeight") private var lineHeight = 1.6
     @AppStorage("fontFamily") private var fontFamily = "ui-monospace, \"SF Mono\", Menlo, monospace"
+    @AppStorage("syntaxColors") private var syntaxColors = true
     @AppStorage("citeLatexCommand") private var citeLatexCommand = "autocite"
     @AppStorage("previewCiteStyle") private var previewCiteStyle = "author-year"
     @AppStorage("aiPresetsText") private var aiPresetsText = defaultAIPresetsText
@@ -234,6 +235,8 @@ struct SettingsView: View {
                     .onChange(of: lineHeight) { _, _ in notifyConfig() }
                 TextField("字體 Font family", text: $fontFamily)
                     .onSubmit(notifyConfig)
+                Toggle(LZ("語法上色（數學、引用、連結、指令、標題、程式碼）"), isOn: $syntaxColors)
+                    .onChange(of: syntaxColors) { _, _ in notifyConfig() }
             }
             .padding().tabItem { Label(LZ("外觀"), systemImage: "textformat.size") }
 
