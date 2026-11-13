@@ -29,6 +29,7 @@ import { lintLatex } from "./lint.js";
 import { skeletonFor } from "../latex/builtin-templates.js";
 import { renderHtml, setCiteLabelResolver, getLastCiteKeys, setBasePaths } from "./preview.js";
 import { guessCiteLabel } from "./citeLabel.js";
+import { createCiteLookup } from "./citeLookup.js";
 import { replaceDocument, undoHistory } from "./loadDocument.js";
 import { livePreview, refreshLivePreview } from "./livePreview.js";
 import { unmatchedBrackets } from "./unmatched.js";
@@ -98,28 +99,18 @@ function applyLivePreview(): void {
 }
 
 // --- Citation labels (author-year), fetched from Zotero, cached ---------------
-const citeLabels = new Map<string, string>();
-const citePending = new Set<string>();
+const citeLookup = createCiteLookup({
+  fetch: (keys) => call("zotero.meta", { keys }),
+  onLabels: () => scheduleRender(), // re-render with the real labels
+});
 
 setCiteLabelResolver((k) =>
-  getConfig().previewCiteStyle === "citekey" ? k : (citeLabels.get(k) ?? guessCiteLabel(k)),
+  getConfig().previewCiteStyle === "citekey" ? k : (citeLookup.label(k) ?? guessCiteLabel(k)),
 );
 
 /** Fetch real "Author et al. (year)" labels for any keys not yet cached. */
 function ensureCiteLabels(keys: string[]): void {
-  const missing = keys.filter((k) => !citeLabels.has(k) && !citePending.has(k));
-  if (!missing.length) return;
-  missing.forEach((k) => citePending.add(k));
-  call("zotero.meta", { keys: missing })
-    .then((res) => {
-      const map = (res ?? {}) as Record<string, string>;
-      for (const k of missing) {
-        citePending.delete(k);
-        if (map[k]) citeLabels.set(k, map[k]);
-      }
-      scheduleRender(); // re-render with the real labels
-    })
-    .catch(() => missing.forEach((k) => citePending.delete(k)));
+  citeLookup.ensure(keys);
 }
 
 /** Apply font size / family / line-height from config via CSS variables. */
