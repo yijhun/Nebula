@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+
+jobs:
+  web-core:
+    name: web-core (tests + typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Unit tests (vitest)
+        working-directory: web-core
+        run: npm test
+      - name: Typecheck
+        working-directory: web-core
+        run: npm run typecheck
+
+  latex-e2e:
+    name: web-core e2e (Markdown → LaTeX → PDF via Tectonic)
+    runs-on: macos-latest
+    # A cold Tectonic cache downloads ~50 MB file by file (~10 min locally).
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Install Tectonic
+        # The e2e script exits 0 when it can't find tectonic, so fail here
+        # instead of passing without compiling anything.
+        run: |
+          brew install tectonic
+          tectonic --version
+      # Tectonic's package cache. The e2e script runs cache-only (offline) by
+      # default; on a cold or stale cache we let it download once and save.
+      - name: Restore Tectonic cache
+        id: tectonic-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Tectonic
+          key: tectonic-${{ runner.os }}-${{ hashFiles('web-core/scripts/e2e-compile.mts', 'web-core/src/latex/**', 'demo-vault/**') }}
+          restore-keys: tectonic-${{ runner.os }}-
+      - name: Compile corpus
+        working-directory: web-core
+        env:
+          E2E_ONLINE: ${{ steps.tectonic-cache.outputs.cache-hit == 'true' && '0' || '1' }}
+          # ctex's macOS fonts (STHeiti, STXihei, STKaiti, STFangsong) are
+          # download-on-demand, and on the runner the font service never
+          # answers for them: looking one up, or even asking where its file
+          # is, blocks forever (CFMessagePortSendRequest). So CJK uses the
+          # Fandol fonts from the TeX bundle here; the LaTeX is unchanged.
+          E2E_CTEX_FONTSET: fandol
+        run: npm run e2e
+
+  macos-app:
+    name: macOS app (build + save self-test)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
+      # Same steps as apple/build-app.sh.
+      - name: Build web core (vite)
+        working-directory: web-core
+        run: |
+          npx vite build
+          npx vite build --config vite.chat.config.ts
+      - name: Generate Xcode project
+        working-directory: apple
+        run: xcodegen generate
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: apple/build/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('apple/project.yml') }}
+      - name: Build Nebula.app
+        working-directory: apple
+        run: |
+          xcodebuild -project Nebula.xcodeproj -scheme Nebula \
+            -configuration Release -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO -quiet
+      - name: Ad-hoc sign
+        run: codesign --force --deep -s - apple/build/Build/Products/Release/Nebula.app
+      # The project's data-safety gate: drives the real editor (WKWebView)
+      # against temp files and fails if any file ends up with the wrong text.
+      # build-app.sh refuses to ship a build that fails this; so does CI.
+      - name: Save self-test
+        timeout-minutes: 5
+        run: apple/build/Build/Products/Release/Nebula.app/Contents/MacOS/Nebula --save-selftest
