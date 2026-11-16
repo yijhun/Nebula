@@ -470,6 +470,7 @@ final class EditorModel: ObservableObject, Identifiable {
             "lineHeight": d.object(forKey: "lineHeight") as? Double ?? 1.6,
             "snippets": Self.parsePairs(d.string(forKey: "snippetsText") ?? "", valueKey: "template"),
             "defaultTemplate": d.string(forKey: "defaultTemplate") ?? "apj",
+            "syntaxColors": d.object(forKey: "syntaxColors") as? Bool ?? true,
         ]
         let presets = Self.parsePairs(d.string(forKey: "aiPresetsText") ?? "", valueKey: "instruction")
         if !presets.isEmpty { cfg["aiPresets"] = presets }
