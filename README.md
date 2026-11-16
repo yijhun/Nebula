@@ -1,5 +1,7 @@
 # Nebula
 
+[![CI](https://github.com/yijhun/Nebula/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yijhun/Nebula/actions/workflows/ci.yml)
+
 > Notes Bred in Astronomy — a note app built for astronomers.
 
 A macOS hybrid note app for academic & astronomy research: draft in **Markdown**,

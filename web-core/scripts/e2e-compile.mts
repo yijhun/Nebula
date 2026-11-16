@@ -7,7 +7,7 @@
  */
 import { convert } from "../src/latex/index.ts";
 import { convertProject } from "../src/latex/project.ts";
-import { execFileSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -16,6 +16,22 @@ const TECTONIC = ["/opt/homebrew/bin/tectonic", "/usr/local/bin/tectonic"]
 if (!TECTONIC) { console.error("tectonic not found — skipping e2e"); process.exit(0); }
 
 const OFFLINE = "http://127.0.0.1:1";
+// E2E_ONLINE=1 lets Tectonic download what it lacks (CI does this when its
+// Tectonic cache is cold). Default stays cache-only, see compile().
+const ONLINE = process.env.E2E_ONLINE === "1";
+// E2E_CTEX_FONTSET=fandol makes ctex use the Fandol fonts from the TeX bundle
+// instead of its macOS set (STHeiti, STKaiti, … — download-on-demand system
+// fonts). On a GitHub runner those aren't downloaded and the macOS font
+// service never answers for them, so any lookup blocks forever. The LaTeX
+// compiled is unchanged: this only drops a ctexopts.cfg next to it, which
+// ctex reads before its options. Unset (local runs), the real macOS fonts.
+const CTEX_FONTSET = process.env.E2E_CTEX_FONTSET;
+function writeCtexOpts(dir: string): void {
+  if (CTEX_FONTSET) writeFileSync(`${dir}/ctexopts.cfg`,
+    // \ProvidesExplFile turns on expl3 syntax, as in ctex's own ctexopts.cfg.
+    `\\ProvidesExplFile{ctexopts.cfg}{2026/11/12}{0}{e2e font set}\n` +
+    `\\ctex_set:nn { option } { fontset = ${CTEX_FONTSET} }\n`);
+}
 
 const BIB = `@article{balbus1991, title={A powerful local shear instability}, author={Balbus, S. and Hawley, J.}, journal={ApJ}, year={1991}, volume={376}, pages={214}}
 @article{ulrich1976, title={An infall model}, author={Ulrich, R.}, journal={ApJ}, year={1976}, volume={210}, pages={377}}
@@ -56,22 +72,65 @@ let pass = 0, fail = 0;
 const base = `${tmpdir()}/np-e2e`;
 rmSync(base, { recursive: true, force: true });
 
-function compile(dir: string, stem: string): string | null {
-  try {
-    // Cache-only, with HTTP pointed at a closed port. Tectonic contacts its
-    // bundle server on every run, and when that host is unreachable each case
-    // pays the full connect timeout (~30s, or minutes with pgfplots) before
-    // typesetting starts. The suite's packages are all cached. See the same
-    // treatment in PDFExporter.runTectonicOnce.
-    execFileSync(TECTONIC!, ["--only-cached", `${stem}.tex`], {
-      cwd: dir, stdio: "pipe",
-      env: { ...process.env, http_proxy: OFFLINE, https_proxy: OFFLINE, ALL_PROXY: OFFLINE, NO_PROXY: "" },
-    });
-    return existsSync(`${dir}/${stem}.pdf`) ? null : "no PDF produced";
-  } catch (e: any) {
-    const log = (e.stderr?.toString() || e.message || "").split("\n").filter((l: string) => /error:/i.test(l)).slice(0, 3).join(" | ");
-    return log || "compile failed";
+// Per-case limit. On CI the `cjk` case once stalled until the job was
+// cancelled, and a stalled Tectonic can ignore SIGKILL for minutes (blocked in
+// a system call), so this never waits on the process past the limit: it
+// samples where Tectonic is stuck (macOS `sample`), kills it, fails the case
+// with that and Tectonic's last output, and moves on to the next case.
+const CASE_TIMEOUT_S = Number(process.env.E2E_CASE_TIMEOUT ?? 180);
+
+function tail(text: string, n: number): string {
+  return text.split("\n").map((l) => l.trim()).filter(Boolean).slice(-n).join(" | ");
+}
+
+/** The heaviest stack of a stuck process, innermost frames last, or "". */
+function stuckAt(pid: number): string {
+  const r = spawnSync("/usr/bin/sample", [String(pid), "2"], { encoding: "utf8", timeout: 30_000 });
+  const graph = (r.stdout ?? "").split("Call graph:")[1]?.split("Total number in stack")[0] ?? "";
+  // Follow the first (heaviest) branch down the tree.
+  const frames: string[] = [];
+  let depth = -1;
+  for (const line of graph.split("\n")) {
+    const m = line.match(/^(\s*[+!:|\s]*)\d+\s+(.+?)\s+\(in ([^)]+)\)/);
+    if (!m) continue;
+    const d = m[1].length;
+    if (d <= depth) break;
+    depth = d;
+    frames.push(`${m[2]} (${m[3]})`);
   }
+  return frames.slice(-8).join(" > ");
+}
+
+function compile(dir: string, stem: string): Promise<string | null> {
+  // Cache-only, with HTTP pointed at a closed port. Tectonic contacts its
+  // bundle server on every run, and when that host is unreachable each case
+  // pays the full connect timeout (~30s, or minutes with pgfplots) before
+  // typesetting starts. The suite's packages are all cached. See the same
+  // treatment in PDFExporter.runTectonicOnce.
+  const child = spawn(TECTONIC!, ONLINE ? [`${stem}.tex`] : ["--only-cached", `${stem}.tex`], {
+    cwd: dir, stdio: ["ignore", "pipe", "pipe"],
+    env: ONLINE ? process.env
+      : { ...process.env, http_proxy: OFFLINE, https_proxy: OFFLINE, ALL_PROXY: OFFLINE, NO_PROXY: "" },
+  });
+  let out = "", err = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stderr.on("data", (d) => { err += d; });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      const where = child.pid ? stuckAt(child.pid) : "";
+      child.kill("SIGKILL");
+      resolve(`timed out after ${CASE_TIMEOUT_S}s` +
+        `; stuck in: ${where || "(no sample)"}` +
+        `; last stderr: ${tail(err, 6) || "(none)"}; last stdout: ${tail(out, 4) || "(none)"}`);
+    }, CASE_TIMEOUT_S * 1000);
+    child.on("error", (e) => { clearTimeout(timer); resolve(`could not run tectonic: ${e.message}`); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) { resolve(existsSync(`${dir}/${stem}.pdf`) ? null : "no PDF produced"); return; }
+      const errors = err.split("\n").filter((l) => /error:/i.test(l)).slice(0, 3).join(" | ");
+      resolve(errors || `compile failed (exit ${code})`);
+    });
+  });
 }
 
 for (const c of CASES) {
@@ -80,9 +139,12 @@ for (const c of CASES) {
   const r = convert(c.md, { bibBackend: "bibtex", ...(c.opts ?? {}) });
   writeFileSync(`${dir}/${c.name}.tex`, r.tex);
   writeFileSync(`${dir}/references.bib`, BIB);
-  const err = compile(dir, c.name);
-  if (err) { fail++; console.log(`✗ ${c.name}: ${err}`); }
-  else { pass++; console.log(`✓ ${c.name}`); }
+  writeCtexOpts(dir);
+  const t0 = Date.now();
+  const err = await compile(dir, c.name);
+  const secs = `(${((Date.now() - t0) / 1000).toFixed(1)}s)`;
+  if (err) { fail++; console.log(`✗ ${c.name} ${secs}: ${err}`); }
+  else { pass++; console.log(`✓ ${c.name} ${secs}`); }
 }
 
 // Project (multi-md → one paper).
@@ -96,9 +158,12 @@ for (const c of CASES) {
   for (const ch of r.chapters) writeFileSync(`${dir}/chapters/${ch.name}`, ch.body);
   writeFileSync(`${dir}/paper.tex`, r.master);
   writeFileSync(`${dir}/references.bib`, BIB);
-  const err = compile(dir, "paper");
-  if (err) { fail++; console.log(`✗ project: ${err}`); }
-  else { pass++; console.log(`✓ project`); }
+  writeCtexOpts(dir);
+  const t0 = Date.now();
+  const err = await compile(dir, "paper");
+  const secs = `(${((Date.now() - t0) / 1000).toFixed(1)}s)`;
+  if (err) { fail++; console.log(`✗ project ${secs}: ${err}`); }
+  else { pass++; console.log(`✓ project ${secs}`); }
 }
 
 console.log(`\n${pass} passed, ${fail} failed (of ${pass + fail})`);
