@@ -33,6 +33,7 @@ struct ShortcutsView: View {
         ("AI / 引用", [
             ("⌘K", "AI 協助 / 續寫"), ("⌥⌘K", "AI 修復 LaTeX"),
             ("⌘⇧K", "插入引用 Zotero"), ("⌥⇧⌘K", "在 Zotero 開啟游標引用"),
+            ("⌥⌘I", "AI 對話面板 Chat panel"),
         ]),
         ("預覽 Preview", [
             ("雙擊預覽段落", "跳到原始行"), ("⤢（預覽右上）", "拖出 / 彈出即時預覽"),

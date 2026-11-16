@@ -230,7 +230,9 @@ struct NoteproApp: App {
                 Button(LZ("AI 對話面板")) {
                     NotificationCenter.default.post(name: .noteproOpenClaudeCode, object: nil)
                 }
-                .keyboardShortcut("l", modifiers: [.command, .option])
+                // ⌥⌘I, not ⌥⌘L: that one is the LaTeX ⇄ Markdown switch, and
+                // two menu items on one key meant only one of them ever fired.
+                .keyboardShortcut("i", modifiers: [.command, .option])
             }
             CommandMenu(Text(LZ("檢視 View"))) {
                 Button(LZ("編輯模式")) { focusedEditor?.viewMode = .edit }
