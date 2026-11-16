@@ -26,7 +26,7 @@ function snip(template: string, label: string, detail: string): Completion {
 }
 
 const ENVIRONMENTS = [
-  "equation", "align", "gather", "multline", "cases",
+  "equation", "align", "aligned", "gather", "multline", "cases",
   "matrix", "bmatrix", "pmatrix", "figure", "table", "tabular",
   "itemize", "enumerate", "description", "theorem", "lemma", "proof",
   "definition", "abstract", "center", "quote", "verbatim", "frame",

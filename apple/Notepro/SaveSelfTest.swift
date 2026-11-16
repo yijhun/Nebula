@@ -150,8 +150,20 @@ enum SaveSelfTest {
 
         print("Switching files")
         type(model, "last words. ")
-        model.open(kenyon); spin(0.4)
-        check(read(physics).contains("last words. "), "unsaved edits reach the file being left")
+        // The save on leaving runs only if the "dirty" message has arrived, and
+        // it lands asynchronously. Wait for the text rather than a fixed time
+        // (slow CI machines), and on failure say which of the two went wrong.
+        let dirtyAtSwitch = model.isDirty
+        let switched = Date()
+        model.open(kenyon)
+        let reached = wait(5) { read(physics).contains("last words. ") }
+        let took = Date().timeIntervalSince(switched)
+        check(reached, "unsaved edits reach the file being left")
+        if !reached {
+            print("        edit registered (isDirty) at switch: \(dirtyAtSwitch); held: \(held); status: \(model.statusText)")
+        } else if took > 0.4 {
+            print("        note: took \(String(format: "%.2f", took)) s to reach the file")
+        }
         check(!read(kenyon).contains("last words. "), "and not the file being opened")
         check(js(model, "window.notepro.getContent()") as? String == read(kenyon), "the editor shows the new file")
 
@@ -168,14 +180,20 @@ enum SaveSelfTest {
 
         asked = []
         corruptBuffer(model, with: prose("something else entirely"))
-        spin(2.4)  // the autosave path, not an explicit save
+        spin(2.0)  // the autosave delay: this is the autosave path, not an explicit save
+        _ = wait(5) { !asked.isEmpty }  // then let that save finish (slow machines)
         check(read(kenyon) == kenyonText, "autosave is stopped too, for text matching no other file")
         check(asked == [.replacesDocument], "and the user is asked")
 
         print("Saving when leaving a file, with nobody to ask")
         asked = []; held = []
         corruptBuffer(model, with: read(derivations))
-        model.open(physics); spin(0.4)
+        model.open(physics)
+        // Check once the save on leaving has finished, not after a fixed time:
+        // on a slow machine it takes over a second, and checking earlier
+        // passes "isn't overwritten" before anything was even tried.
+        check(model.flushingURL == kenyon, "leaving starts a save of the file being left")
+        check(wait(5) { model.flushingURL == nil }, "and it finishes")
         check(read(kenyon) == kenyonText, "the file isn't overwritten")
         check(asked.isEmpty && held == ["kenyon.md"], "the user is told afterwards")
         check(history(root, kenyon).contains(read(derivations)), "the text is kept in history")
@@ -222,11 +240,11 @@ enum SaveSelfTest {
         _ = js(model, "window.notepro.setContent(\(EditorModel.jsStringLiteral(read(derivations))), false, -1); 0")
         model.handleMessage(["type": "dirty"])
         asked = []
-        var saved = true
+        var saved: Bool?
         model.flushToDisk { saved = $0 }
-        spin(0.5)
+        check(wait(5) { saved != nil }, "the save reports back")
         check(read(stale) == staleText, "the buffer's text isn't written")
-        check(!saved, "the save reports failure rather than success")
+        check(saved == false, "the save reports failure rather than success")
         check(model.isDirty, "and stays unsaved")
         _ = js(model, "window.notepro.setContent(\(EditorModel.jsStringLiteral(staleText)), false, \(model.loadToken)); 0")
         spin(2.4)
