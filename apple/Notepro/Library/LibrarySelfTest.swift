@@ -137,6 +137,37 @@ enum LibrarySelfTest {
             check((try? String(contentsOf: libRoot.appendingPathComponent("filler9/keep.txt"), encoding: .utf8)) == "mine",
                   "the foreign folder is untouched")
 
+            print("ADS check (offline, canned answers)")
+            let fake: LibraryADS.Fetch = { q, _, _ in
+                if q.contains("arXiv:2101.00001") {
+                    return [["bibcode": "2021ApJ...900....1X", "doi": ["10.3847/X"], "pub": "ApJ", "volume": "900",
+                             "page": ["1"], "year": "2021", "doctype": "article",
+                             "identifier": ["arXiv:2101.00001", "2021ApJ...900....1X"]]]
+                }
+                if q == "bibcode:\"1994A&A...291..943O\"" {
+                    return [["bibcode": "1994A&A...291..943O", "title": ["One"]]]
+                }
+                if q.contains("bibstem") {
+                    return [["bibcode": "1994A&A...291..943O", "title": ["One"]], ["bibcode": "1994A&A...291..943P", "title": ["Two"]]]
+                }
+                return []
+            }
+            let dry = try LibraryADS.run(store: store, apply: false, fetch: fake)
+            let up = dry.updates.first { $0.citekey == "arxivOnly2021" }
+            check(up?.nowPublished == true && up?.journal == "ApJ" && up?.bibcode == "2021ApJ...900....1X",
+                  "a preprint with a journal version is found")
+            check(store.meta(folder: "arxivOnly2021")?.version == "preprint", "dry run changes nothing")
+            check(dry.arxivPDFs["arxivOnly2021"] == "https://arxiv.org/pdf/2101.00001", "missing PDF offered from arXiv")
+            check(dry.files.first { $0.hint == "1994A&A...291..943O" }?.matches.count == 1,
+                  "a full bibcode file name matches exactly one paper")
+            check(LibraryADS.bibcodeQuery("1987A&A...186.") == "year:1987 bibstem:\"A&A\" volume:186",
+                  "a cut-short bibcode becomes a year/journal/volume query")
+            _ = try LibraryADS.run(store: store, apply: true, fetch: fake)
+            let pm = store.meta(folder: "arxivOnly2021")
+            check(pm?.version == "published" && pm?.citekey == "arxivOnly2021" && pm?.ids.doi == "10.3847/x"
+                  && pm?.bibliographic.fields["publicationTitle"] == "ApJ",
+                  "--apply updates the journal data and keeps the citekey")
+
         } catch {
             print("  FAIL  fixture: \(error)")
             failures += 1

@@ -55,6 +55,7 @@ enum NebulaMain {
         if CommandLine.arguments.contains("--library-selftest") { LibrarySelfTest.run() }
         if CommandLine.arguments.contains("--zotero-import-report") { ZoteroImportReport.runCLI() }
         if CommandLine.arguments.contains("--library-import") { LibraryImporter.runCLI() }
+        if CommandLine.arguments.contains("--library-ads") { LibraryADS.runCLI() }
         NoteproApp.main()
     }
 }
