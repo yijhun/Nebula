@@ -104,13 +104,60 @@ struct FigurePickerView: View {
             HStack(spacing: 5) {
                 Text(fig.tag).font(.caption.weight(.semibold))
                 Text("p.\(fig.pageIndex + 1)").font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                if fig.rect != nil {
+                    Button { copyPDF(fig) } label: {
+                        Label(LZ("複製 PDF"), systemImage: "doc.on.doc").font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(LZ("複製成 PDF，可直接貼進 Keynote；也可以把圖拖過去"))
+                }
             }
             Text(fig.caption).font(.caption2).foregroundStyle(.secondary)
                 .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
         }
         .contentShape(Rectangle())
         .onTapGesture { insert(fig) }
+        .onDrag { dragProvider(fig) }
+        .contextMenu {
+            Button(LZ("插入筆記")) { insert(fig) }
+            if fig.rect != nil { Button(LZ("複製 PDF")) { copyPDF(fig) } }
+        }
         .help(fig.caption)
+    }
+
+    // MARK: - PDF out (Keynote)
+
+    private func fileStem(_ fig: PaperFigure) -> String {
+        let slug = fig.tag.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "/", with: "-")
+        return "fig-\(citekey)-\(slug)"
+    }
+
+    /// The figure's region cropped out of the source paper as a one-page PDF.
+    private func pdfData(_ fig: PaperFigure) -> Data? {
+        guard let rect = fig.rect, let src = pdfPath, let doc = PDFDocument(url: src),
+              let page = doc.page(at: fig.pageIndex) else { return nil }
+        return FigureClipboard.croppedPDF(page: page, rect: rect)
+    }
+
+    private func copyPDF(_ fig: PaperFigure) {
+        guard let data = pdfData(fig) else {
+            status = LZ("這張圖沒有位置資訊，無法裁切 PDF"); return
+        }
+        status = FigureClipboard.copy(data, name: fileStem(fig))
+            ? LZ("已複製 PDF，可直接貼進 Keynote")
+            : LZ("複製 PDF 失敗")
+    }
+
+    /// Dragging a card out (into Keynote, Finder, …) carries the cropped PDF;
+    /// the detector's PNG is the fallback when the figure has no region.
+    private func dragProvider(_ fig: PaperFigure) -> NSItemProvider {
+        if let data = pdfData(fig), let file = FigureClipboard.tempFile(data, name: fileStem(fig)),
+           let p = NSItemProvider(contentsOf: file) {
+            return p
+        }
+        return NSItemProvider(contentsOf: fig.image) ?? NSItemProvider()
     }
 
     private var footer: some View {
@@ -156,9 +203,7 @@ struct FigurePickerView: View {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let fm = FileManager.default
-        let slug = fig.tag.replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "/", with: "-")
-        let stem = "fig-\(citekey)-\(slug)"
+        let stem = fileStem(fig)
         // Inserting the same figure twice should point at the file already in
         // the vault, not pile up -2, -3, -4… copies of identical bytes. Only a
         // genuinely different image under the same name gets a new number.
@@ -180,13 +225,8 @@ struct FigurePickerView: View {
 
         // Vector companion, cropped from the source paper at the same region.
         let vecURL = dir.appendingPathComponent("\(base).pdf")
-        if !fm.fileExists(atPath: vecURL.path),
-           let rect = fig.rect, let src = pdfPath, let doc = PDFDocument(url: src),
-           let page = doc.page(at: fig.pageIndex), let clip = page.copy() as? PDFPage {
-            clip.setBounds(rect, for: .cropBox)
-            clip.setBounds(rect, for: .mediaBox)
-            let vec = PDFDocument(); vec.insert(clip, at: 0)
-            vec.write(to: vecURL)
+        if !fm.fileExists(atPath: vecURL.path), let data = pdfData(fig) {
+            try? data.write(to: vecURL)
         }
 
         // Always a one-line source; the paper's full caption only when asked for.

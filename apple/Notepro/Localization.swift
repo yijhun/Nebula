@@ -210,4 +210,11 @@ let EN: [String: String] = [
     "檔案維持原樣，那段文字可以在版本歷史找到。": "The file was left as it was. The text is in version history.",
     "編輯器裡的文字和另一個檔案完全相同": "The text in the editor is identical to another file",
     "編輯器裡的文字幾乎不包含這個檔案原本的內容。": "The text in the editor contains almost none of this file's content.",
+    // Figure picker: PDF out to Keynote
+    "插入筆記": "Insert into Note",
+    "複製 PDF": "Copy PDF",
+    "複製成 PDF，可直接貼進 Keynote；也可以把圖拖過去": "Copy as PDF to paste into Keynote; you can also drag the figure there",
+    "這張圖沒有位置資訊，無法裁切 PDF": "This figure has no position on the page, so it can't be cropped as PDF",
+    "已複製 PDF，可直接貼進 Keynote": "Copied as PDF. Paste it into Keynote",
+    "複製 PDF 失敗": "Couldn't copy the PDF",
 ]
