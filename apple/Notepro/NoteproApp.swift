@@ -52,6 +52,8 @@ enum NebulaMain {
     static func main() {
         if CommandLine.arguments.contains("--mcp") { NebulaMCP.run() }
         if CommandLine.arguments.contains("--save-selftest") { SaveSelfTest.run() }
+        if CommandLine.arguments.contains("--library-selftest") { LibrarySelfTest.run() }
+        if CommandLine.arguments.contains("--zotero-import-report") { ZoteroImportReport.runCLI() }
         NoteproApp.main()
     }
 }
