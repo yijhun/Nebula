@@ -9,13 +9,14 @@ publish in **LaTeX**. Obsidian-compatible vault, live preview, in-place
 Markdown ⇄ LaTeX, one-click PDF (AASTeX/ApJ by default), Zotero + arXiv/ADS
 citations, an AI chat panel, and lecture transcription — all local-first.
 
-> Status: **v0.3**. macOS only.
+> Status: **v0.3.1**. macOS only.
 
 ## Features
 
 - **Hybrid editing** — write plain Markdown, switch any note to a real LaTeX
   `.tex` in place; edits sync both ways. CodeMirror 6 editor with smart `$`
-  pairing, instant red on unmatched brackets, same-document recall
+  pairing, syntax colours for math, citations, links and commands, instant
+  red on unmatched brackets, same-document recall
   autocomplete, ~55 astronomy aliases (`\sun`→`\odot`, `\kms`, `\vlsr`, …).
 - **Live preview** (Obsidian-style) — inline math, images (drag-resizable),
   wikilinks, checkboxes, tables; heading folding; inline title rename;
