@@ -118,7 +118,9 @@ CSL-JSON fields plus:
   versions. Nebula offers to update the metadata to the journal version,
   keeping the citekey. The PDF stays the arXiv one unless the user downloads
   the journal PDF themselves. The check runs at migration, then periodically
-  (e.g. weekly) and when a preprint is opened.
+  (e.g. weekly) and when a preprint is opened. ADS answers an
+  `identifier:"arXiv:<id>"` query with the journal record. The spike found
+  54 of the 59 arXiv-only items already published.
 - **Missing PDFs.** If arXiv has the paper, Nebula offers to download it, and
   downloads only after the user confirms. A journal-only PDF opens the
   publisher page in the browser for the user to download; Nebula never logs in.
@@ -214,10 +216,12 @@ reading marks. For those 8 papers they are used in place of a pdffigures2 run
 when their regions look right.
 
 Zotero stores annotation positions as JSON in `itemAnnotations.position`,
-e.g. `{"pageIndex":4,"rects":[[x1,y1,x2,y2]]}`. The conversion into PDFKit
-coordinates needs testing on real items **(verify)**. The type codes used
-above (1 highlight, 2 note, 3 image, 4 ink) are from memory of Zotero's
-schema **(verify)**.
+e.g. `{"pageIndex":4,"rects":[[x1,y1,x2,y2]]}`. These are PDF points with a
+bottom-left origin and map onto PDFKit page space as-is: verified on all 87
+image annotations against Zotero's cached renders. Ink uses `paths` instead
+of `rects`. The type codes (1 highlight, 2 note, 3 image, 4 ink) were
+confirmed from the data. Pages with an offset media box or rotation are still
+untested.
 
 ### 5.4 Cut-over criteria
 
@@ -240,15 +244,19 @@ schema **(verify)**.
 - Zoom, single or two-page layout, fit width
 - Split view of one paper (two places at once)
 - Dark mode that darkens text and background but keeps images in their true
-  colours. Simple inversion makes astronomical images unreadable. Feasibility
-  with PDFKit to be tested **(verify)**.
+  colours. Simple inversion makes astronomical images unreadable. Shown on a
+  static render: invert the page, then composite the `figures.json` regions
+  back from the original. Doing it in a live, scrolling `PDFView` is untested. Figures that detection missed get a per-figure "keep
+  colours" toggle.
 
 ### 6.2 Tier 2 — better than Zotero
 
 - **Citation hover card.** Hovering "(Smith et al. 2020)" or a reference-list
   entry shows title, authors, abstract and whether the paper is in the library.
   It is resolved through the ADS reference list of the current paper, not by
-  parsing text **(verify coverage)**.
+  parsing text. ADS has substantial reference lists for modern papers;
+  matching one in-text citation to one entry, and old or scanned papers, are
+  untested.
 - **Figure reference preview.** Hovering "Fig. 3", "Table 2" or an equation
   number shows a thumbnail from `figures.json`.
 - **Pin a figure.** Turn a figure into a small floating window to keep it in
@@ -276,8 +284,11 @@ See §9.
 
 - Run pdffigures2 over **every** paper once, at migration, then for each new
   paper. It has a batch mode over a directory, `-t` for the thread count, and
-  `-d` for JSON-only output with no images. Roughly 1.5 s per paper, so about
-  10 minutes for the library **(verify on a sample)**.
+  `-d` for JSON-only output with no images. Measured: about 0.25 s per paper
+  with `-t 1 -Xmx512m` (0.7 GB peak), so about 2 minutes for the library.
+  About 1 in 6 figures is missed, mostly in scanned and some modern papers.
+  Missed captions are kept (`-c`) and shown as "not located" with a one-click
+  crop (see `SPIKE-PAPER-LIBRARY.md`).
 - Import the zotero-figure cache where it exists (2 papers), and the 87
   tool-generated image annotations on 8 papers (§5.3).
 - Store only `figures.json` (a few KB per paper). Do **not** store images up
@@ -289,7 +300,8 @@ See §9.
 - Fix-ups in the reader: adjust a crop, mark a missed figure, delete a wrong
   one. Splitting multi-panel figures into (a)(b)(c) comes later.
 - arXiv source files can supply the original figure files where they exist,
-  which beats any crop **(verify availability)**. Later phase.
+  which beats any crop. 15 of 15 sampled papers have a source tarball; whether
+  it holds usable figure files is still open. Later phase.
 
 ### 7.2 `figures.json`
 
@@ -301,9 +313,12 @@ an optional Claude description.
 
 **Type tags:** continuum image, moment map, channel map, PV diagram, spectrum,
 SED, light curve, CMD/HR diagram, radial profile, corner plot, model
-schematic, table. They come from caption keywords first. A local vision model
-(the installed `gemma4`) labels figures whose caption does not say
-**(verify quality)**.
+schematic, table. They come from caption keywords, including inheriting
+"Same as Fig. N" captions; in the spike that gave a fine type for about half
+the figures. The local vision model (`gemma4`) was unreliable for fine types,
+so it gives every figure only a coarse class (sky map / data plot / spectrum /
+schematic / other) at 0.3–0.5 s per figure. How to tag the other half is still
+open.
 
 Claude descriptions are written only on demand: when the user asks about a
 figure, captures it, or adds it to a compare board. A description is stored
@@ -375,9 +390,9 @@ running app's reader windows. Add a local channel:
   grounded.
 - Claude locates text by **quote**, not coordinates. The app finds the quote
   with PDFKit search to place highlights and jumps.
-- Returning images from an MCP tool to Claude Code needs testing; the fallback
-  is writing a file for the CLI to read **(verify)**. Codex may get text only
-  **(verify)**.
+- An MCP tool can return the image itself (an `image` content block): verified
+  in Claude Code 2.1.319 and Codex 0.155.1. Both read the axes and panels
+  correctly.
 
 ### 8.3 Chat sidebar
 
@@ -437,8 +452,10 @@ figures with links, and related papers in the library (semantic index).
 - If not, show a **preview card**: title, authors, year, abstract, with
   "Open PDF to check", "Add to library", "Open in ADS".
 - Claude's paper suggestions carry these links, so the user opens and checks
-  before adding. Whether the chat web view makes them clickable needs
-  checking **(verify)**.
+  before adding. The chat's Markdown renderer keeps these links, but nothing
+  handles the click yet. Add a link handler in `web-core/src/chat/main.ts`
+  that posts to Swift: `nebula://` goes to the reader, other URLs open in the
+  browser.
 - Citation hover cards in the reader (§6.2) use the same card.
 
 ### 8.7 Browser
@@ -448,9 +465,10 @@ figures with links, and related papers in the library (semantic index).
   arXiv id or bibcode on the page and sends `nebula://paper/...`. Metadata
   comes from ADS, so no Zotero-style translators are needed.
 - Alternative, not planned: implementing the Zotero Connector's local protocol
-  so the official extension saves into Nebula. As far as known, that protocol
-  is not a documented, stable API **(verify)**, and it would clash with Zotero
-  on the same port while both are installed.
+  so the official extension saves into Nebula. Zotero's docs name the
+  endpoints, but the request and response schema is defined only by its
+  source, and it would clash with Zotero on the same port while both are
+  installed.
 
 ## 9. Astronomical object index
 
@@ -513,18 +531,41 @@ at any time.
 
 ## 12. To verify
 
-- Zotero annotation position JSON → PDFKit coordinates, and the annotation
-  type codes (§5.3)
-- How ADS exposes the preprint ↔ journal version link (§4.4)
-- Per-paper `--resume` after the CLI was shut down, and the Codex equivalent
-  (§8.3, §10)
-- Whether the Zotero Connector protocol is documented and stable (§8.7)
-- Dark mode that keeps image colours, in PDFKit (§6.1)
-- ADS reference-list coverage for citation resolution (§6.2)
-- pdffigures2 quality and speed on a sample of astronomy papers (§7.1)
-- arXiv source figure availability (§7.1)
-- `gemma4` quality for figure type labels (§7.2)
-- Keynote AppleScript for "Send to Keynote" (§7.3)
-- MCP tool image results in Claude Code; image support in Codex (§8.2)
-- Clickable `nebula://` links in the chat web view (§8.6)
-- Live PDF view cap and suspension timing, by measurement (§10)
+The first round of checks ran on 2026-11-26; results and method are in
+`SPIKE-PAPER-LIBRARY.md`. Settled there:
+
+- coordinates for image regions and highlights, and the annotation type codes
+- the ADS preprint → journal link
+- pdffigures2 speed
+- `gemma4` only for coarse classes
+- MCP image results in both CLIs (small images)
+- Claude `--resume` across processes
+- link rendering in the chat
+- the Connector protocol (stays not planned)
+
+Still open:
+
+- Ink and note annotations, and pages with an offset media box or rotation
+  (§5.3)
+- Figure detection recall measured against labelled ground truth, e.g. the
+  87 zotero-figure regions (§7.1)
+- Fine type tags for the half of figures whose caption names no type (§7.2)
+- Matching an in-text citation to one ADS reference (§6.2)
+- Duplicate detection again after preprints resolve to journal records
+  (§4.4)
+- How long Claude Code keeps a session resumable. The CLI holds it, so
+  Nebula stores only the session id and its own transcript per paper (§8.3)
+- MCP image results at full-page size: token cost and limits (§8.2)
+- Dark mode inside a live `PDFView`, within the performance budget (§6.1)
+- Reference coverage for old and scanned papers (§6.2)
+- What arXiv source tarballs contain: usable figure files or not (§7.1).
+  Needs a few downloads.
+- Licence and speed of zotero-figure's layout model as a second figure
+  detector (§7.1)
+- Inserting a PDF as a vector image through Keynote AppleScript (§7.3). Needs
+  a run against Keynote.
+- Whether a suspended tab's `PDFView` really frees memory, measured in the app
+  (§10)
+- Codex's default model (`gpt-6.1-sol` in `~/.codex/config.toml`) is rejected
+  for the user's ChatGPT account. Nebula's Codex chat needs a model the
+  account accepts (§8).
