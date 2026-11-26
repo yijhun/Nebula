@@ -46,9 +46,9 @@ enum LibrarySelfTest {
             check(a?.pdf?.exists == true, "stored PDF resolves to the file in storage/")
             check(a?.otherAttachments == 1, "linked URL counted as another attachment")
             check(byKey["twoPdfs2019"]?.issues.contains { $0.contains("2 PDFs") } == true, "two PDFs flagged")
-            check(t.orphanPDFs == 1 && t.orphanNotes == 1, "parentless PDF and note listed, not dropped")
+            check(t.orphanPDFs == 2 && t.orphanNotes == 1, "parentless PDFs and note listed, not dropped")
             check(plan.collections["Proposal files"]?.files == 1
-                  && plan.orphans.first { $0.kind == .pdf }?.collections == ["Proposal files"],
+                  && plan.orphans.contains { $0.kind == .pdf && $0.collections == ["Proposal files"] },
                   "a standalone PDF's collection is counted and listed")
 
             print("Annotations")
@@ -89,6 +89,54 @@ enum LibrarySelfTest {
             let mapping = out.appendingPathComponent("collection-mapping.json")
             let reread = try? JSONDecoder().decode([String: CollectionRule].self, from: Data(contentsOf: mapping))
             check(reread?["BigBucket"]?.action == .drop, "collection-mapping.json reads back as a mapping")
+
+            print("Import into a library folder")
+            let libRoot = fx.root.appendingPathComponent("library")
+            // A folder that is not a library paper must never be overwritten.
+            try FileManager.default.createDirectory(at: libRoot.appendingPathComponent("filler9"), withIntermediateDirectories: true)
+            try "mine".write(to: libRoot.appendingPathComponent("filler9/keep.txt"), atomically: true, encoding: .utf8)
+            var opts = LibraryImporter.Options()
+            opts.zoteroDir = fx.root; opts.library = libRoot; opts.vault = fx.vault
+            opts.restoreCited = true; opts.dbPathOverride = fx.db
+            let r1 = try LibraryImporter.run(opts)
+            let store = PaperLibraryStore(root: libRoot)
+            check(r1.created == 16 && r1.skipped.count == 1 && r1.skipped[0].hasPrefix("filler9"),
+                  "16 papers created; the foreign filler9 folder skipped (got \(r1.created), \(r1.skipped))")
+            check(r1.restoredFromTrash == ["trashed2018"], "the trashed paper the vault cites is restored")
+            check(store.meta(folder: "trashed2018") != nil, "restored paper has its folder")
+            let am = store.meta(folder: "smithDisks2020")
+            check(am?.status == "unread" && am?.pdf == "paper.pdf" && am?.bibliographic.creators.first?.family == "Smith",
+                  "meta.json has status, PDF and creators")
+            check(FileManager.default.fileExists(atPath: libRoot.appendingPathComponent("smithDisks2020/paper.pdf").path),
+                  "PDF copied into the paper folder")
+            let anns = store.read([LibraryAnnotation].self, from: libRoot.appendingPathComponent("smithDisks2020/annotations.json")) ?? []
+            check(anns.count == 2 && anns.contains { $0.kind == .highlight && $0.text == "disk mass" && $0.rects?.first == [100, 200, 300, 212] }
+                  && anns.contains { $0.kind == .ink && $0.paths?.first == [10, 10, 20, 20] },
+                  "highlight and ink converted with their coordinates")
+            let figs = store.read([LibraryFigure].self, from: libRoot.appendingPathComponent("smithDisks2020/figures.json")) ?? []
+            check(figs == [LibraryFigure(label: "Figure 2", page: 3, rect: [50, 300, 550, 700], source: "zotero-figure")],
+                  "image annotation became a labelled figure region")
+            let note = try? String(contentsOf: libRoot.appendingPathComponent("smithDisks2020/notes/zotero-NOTE0060.md"), encoding: .utf8)
+            check(note?.contains("# Child note") == true && note?.contains("**section 3**") == true, "child note converted to Markdown")
+            let files = store.read([FileEntry].self, from: store.filesDir.appendingPathComponent("files.json")) ?? []
+            check(files.count == 2 && files.contains { $0.name == "Proposal_files/orphan.pdf" }
+                  && files.contains { $0.paperCandidate == "1994A&A...291..943O" },
+                  "parentless PDFs copied to _files, the bibcode-named one marked to look up")
+
+            print("Running the import again")
+            var edited = anns
+            edited.append(LibraryAnnotation(id: "c:1", kind: .highlight, page: 0, rects: [[0, 0, 1, 1]], color: "#000", author: "claude"))
+            try store.write(edited, to: libRoot.appendingPathComponent("smithDisks2020/annotations.json"))
+            var m = am!; m.lastPage = 7
+            try store.write(m, to: libRoot.appendingPathComponent("smithDisks2020/meta.json"))
+            let r2 = try LibraryImporter.run(opts)
+            check(r2.created == 0 && r2.updated == 16 && r2.pdfsCopied == 0, "second run updates in place, copies nothing")
+            let anns2 = store.read([LibraryAnnotation].self, from: libRoot.appendingPathComponent("smithDisks2020/annotations.json")) ?? []
+            check(anns2.count == 3 && anns2.contains { $0.author == "claude" }, "annotations added in Nebula survive a re-import")
+            check(store.meta(folder: "smithDisks2020")?.lastPage == 7, "reading position survives a re-import")
+            check((try? String(contentsOf: libRoot.appendingPathComponent("filler9/keep.txt"), encoding: .utf8)) == "mine",
+                  "the foreign folder is untouched")
+
         } catch {
             print("  FAIL  fixture: \(error)")
             failures += 1
@@ -106,11 +154,13 @@ enum LibrarySelfTest {
             let root = fm.temporaryDirectory.appendingPathComponent("nebula-lib-selftest-\(UUID().uuidString)")
             let storage = root.appendingPathComponent("storage")
             let vault = root.appendingPathComponent("vault")
-            for d in [storage.appendingPathComponent("PDFA0001"), storage.appendingPathComponent("PDFORPH1"), vault] {
+            for d in [storage.appendingPathComponent("PDFA0001"), storage.appendingPathComponent("PDFORPH1"),
+                      storage.appendingPathComponent("PDFORPH2"), vault] {
                 try fm.createDirectory(at: d, withIntermediateDirectories: true)
             }
             try Data("%PDF-1.4\n".utf8).write(to: storage.appendingPathComponent("PDFA0001/a.pdf"))
             try Data("%PDF-1.4\n".utf8).write(to: storage.appendingPathComponent("PDFORPH1/orphan.pdf"))
+            try Data("%PDF-1.4\n".utf8).write(to: storage.appendingPathComponent("PDFORPH2/1994A&A...291..943O.pdf"))
             try """
             Disks [@smithDisks2020; @missingKey2001] and more \\citep{smithDisks2020a, eDisk2021}.
             Mail me@example.com, not a citation. Old one [@trashed2018].
@@ -139,8 +189,9 @@ enum LibrarySelfTest {
         CREATE TABLE collections (collectionID INTEGER PRIMARY KEY, collectionName TEXT, parentCollectionID INT);
         CREATE TABLE collectionItems (collectionID INT, itemID INT);
         CREATE TABLE itemAttachments (itemID INT, parentItemID INT, linkMode INT, contentType TEXT, path TEXT);
-        CREATE TABLE itemNotes (itemID INT, parentItemID INT, title TEXT);
-        CREATE TABLE itemAnnotations (itemID INT, parentItemID INT, type INT, authorName TEXT);
+        CREATE TABLE itemNotes (itemID INT, parentItemID INT, title TEXT, note TEXT);
+        CREATE TABLE itemAnnotations (itemID INT, parentItemID INT, type INT, authorName TEXT,
+          text TEXT, comment TEXT, color TEXT, pageLabel TEXT, position TEXT);
         CREATE TABLE deletedItems (itemID INT);
         INSERT INTO itemTypes VALUES (1,'journalArticle'),(2,'attachment'),(3,'note'),(4,'annotation');
         INSERT INTO fields VALUES (1,'citationKey'),(2,'title'),(3,'DOI'),(4,'date'),(5,'extra'),(6,'url');
@@ -152,7 +203,7 @@ enum LibrarySelfTest {
         // with it, as in Zotero, where only the parent is in deletedItems),
         // 7 two PDFs, 8–12 fillers, 13–14 book chapters sharing a title,
         // 15–16 a preprint and its journal version, 17 citekey pinned in extra.
-        // Attachments 20–25, annotations 40–44, notes 60–61.
+        // Attachments 20–26 (25, 26 have no parent), annotations 40–44, notes 60–61.
         static let rows: String = {
             var s = ""
             var v = 0
@@ -180,19 +231,26 @@ enum LibrarySelfTest {
             item(16, "PUBL0016", "publishedSame2020", "A result first posted on arXiv", doi: "10.9/pub")
             item(17, "PINN0017", "", "Paper whose key is pinned in extra", extra: "Citation Key: pinned2022")
             s += """
-            INSERT INTO items VALUES (20,2,'PDFA0001'),(21,2,'LINKA001'),(22,2,'PDFF0001'),(23,2,'PDFG0001'),(24,2,'PDFG0002'),(25,2,'PDFORPH1');
+            INSERT INTO items VALUES (20,2,'PDFA0001'),(21,2,'LINKA001'),(22,2,'PDFF0001'),(23,2,'PDFG0001'),(24,2,'PDFG0002'),(25,2,'PDFORPH1'),(26,2,'PDFORPH2');
             INSERT INTO itemAttachments VALUES (20,1,0,'application/pdf','storage:a.pdf'),
               (21,1,3,'text/html',NULL),
               (22,6,0,'application/pdf','storage:f.pdf'),
               (23,7,0,'application/pdf','storage:g1.pdf'),(24,7,0,'application/pdf','storage:g2.pdf'),
-              (25,NULL,0,'application/pdf','storage:orphan.pdf');
+              (25,NULL,0,'application/pdf','storage:orphan.pdf'),
+              (26,NULL,0,'application/pdf','storage:1994A&A...291..943O.pdf');
             INSERT INTO items VALUES (40,4,'ANN00040'),(41,4,'ANN00041'),(42,4,'ANN00042'),(43,4,'ANN00043'),(44,4,'ANN00044');
-            INSERT INTO itemAnnotations VALUES (40,20,1,''),(41,20,3,'tool'),(42,20,4,''),(43,22,1,''),(44,25,1,'');
+            INSERT INTO itemAnnotations VALUES
+              (40,20,1,'','disk mass','key number','#ffd400','3','{"pageIndex":2,"rects":[[100,200,300,212]]}'),
+              (41,20,3,'tool','','','#ffd400','4','{"pageIndex":3,"rects":[[50,300,550,700]]}'),
+              (42,20,4,'','','','#2ea8e5','1','{"pageIndex":0,"width":1,"paths":[[10,10,20,20]]}'),
+              (43,22,1,'','gone','','#ffd400','1','{"pageIndex":0,"rects":[[1,1,2,2]]}'),
+              (44,25,1,'','loose','','#ffd400','1','{"pageIndex":0,"rects":[[1,1,2,2]]}');
             INSERT INTO items VALUES (60,3,'NOTE0060'),(61,3,'NOTE0061');
-            INSERT INTO itemNotes VALUES (60,1,'Child note'),(61,NULL,'Standalone note');
+            INSERT INTO itemNotes VALUES (60,1,'Child note','<h1>Child note</h1><p>Read <b>section 3</b>.</p>'),
+              (61,NULL,'Standalone note','<p>Hello</p>');
             INSERT INTO deletedItems VALUES (6);
-            INSERT INTO tags VALUES (1,'unread'),(2,'stars: formation'),(3,'Accretion'),(4,'favourite');
-            INSERT INTO itemTags VALUES (1,1,0),(1,2,0),(1,3,1),(1,4,0);
+            INSERT INTO tags VALUES (1,'unread'),(2,'stars: formation'),(3,'Accretion'),(4,'favourite'),(5,'Figure 2');
+            INSERT INTO itemTags VALUES (1,1,0),(1,2,0),(1,3,1),(1,4,0),(41,5,0);
             INSERT INTO collections VALUES (1,'Proj project',NULL),(2,'BigBucket',NULL),(3,'Proposal files',NULL);
             INSERT INTO collectionItems VALUES (3,25),(1,1),(2,1),(2,2),(2,3),(2,4),(2,5),(2,7),(2,8),(2,9),(2,10),(2,11),(2,12);
             INSERT INTO creators VALUES (1,'Ann','Smith');

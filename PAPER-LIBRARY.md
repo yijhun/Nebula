@@ -79,18 +79,26 @@ Library/
   beutherFragmentationDiskFormation2018/   folder name = citekey
     paper.pdf
     meta.json            bibliographic data + identifiers
-    annotations.json     highlights, notes, ink, figure regions
-    figures.json         detected figures and tables (§7)
+    annotations.json     highlights, notes, ink
+    figures.json         figure regions: detected, or image annotations from Zotero (§7)
+    notes/               Zotero child notes, converted to Markdown
     objects.json         astronomical objects mentioned (§9)
     chat/                reader chat sessions for this paper
+  _files/                files that are not papers (files.json lists them)
+  .import/               the last import's plan, collection mapping and result
   .index.sqlite          search index; a cache, rebuildable from the folders
 ```
+
+Implemented in `apple/Notepro/Library/` (`PaperLibrary.swift`,
+`LibraryImporter.swift`); the default root is `~/Nebula Library`.
 
 The PDF is never modified. Annotations live in `annotations.json`.
 
 ### 4.2 `meta.json`
 
-CSL-JSON fields plus:
+`bibliographic` keeps Zotero's data losslessly: its item type, every field,
+and the creators with their roles. `.bib` and CSL output are mapped from it.
+Plus:
 
 - `ids`: `doi`, `bibcode`, `arxiv`
 - `citekey` and `aliases` (keys of duplicates merged into this one)
@@ -192,7 +200,12 @@ copying the page URL and pasting it into Add by identifier.
 3. The user reviews the report: merges duplicates, approves PDF downloads and
    metadata updates.
 4. Import: create `Library/<citekey>/`, copy each PDF, write `meta.json` and
-   `annotations.json`, turn Better Notes notes into Markdown notes in the vault.
+   `annotations.json`, `figures.json`, and Zotero child notes as Markdown in
+   the paper's `notes/` folder. Duplicates are imported as separate papers and
+   merged afterwards (merging keeps the removed key as an alias). Trashed
+   items the vault still cites can be restored (`--restore-cited`).
+   Parentless PDFs go to `_files/`; ones named like an ADS bibcode are marked
+   to be looked up and turned into papers.
 5. A background job builds the search index (§10 rules apply).
    `figures.json` and `objects.json` are built for the whole library when
    phases 4 and 7 land, under the same rules.

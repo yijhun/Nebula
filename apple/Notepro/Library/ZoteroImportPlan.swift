@@ -100,6 +100,8 @@ struct ImportPlan: Codable {
     var collections: [String: CollectionRule]
     /// Citekeys of items in Zotero's trash (not imported), to explain citations.
     var trashedCitekeys: [String]
+    /// Trashed items imported anyway because the caller asked for them.
+    var restoredFromTrash: [String] = []
     var vault: VaultCheck?
 }
 
@@ -113,8 +115,12 @@ enum ZoteroImportPlanner {
     ]
 
     static func plan(_ lib: ZoteroLibrary, zoteroDir: URL,
-                     mapping: [String: CollectionAction]? = nil) -> ImportPlan {
-        let live = lib.items.filter { !$0.deleted }
+                     mapping: [String: CollectionAction]? = nil,
+                     restore: Set<String> = []) -> ImportPlan {
+        // Items in the trash are left out, except those the caller restores
+        // (e.g. papers the user's notes still cite).
+        let live = lib.items.filter { !$0.deleted || restore.contains($0.citekey) }
+        let restoredIDs = Set(live.filter(\.deleted).map(\.itemID))
         let liveIDs = Set(live.map(\.itemID))
         var totals = ImportTotals()
         totals.liveItems = live.count
@@ -147,7 +153,9 @@ enum ZoteroImportPlanner {
         }
 
         // Attachments and annotations by parent.
-        let liveAtt = lib.attachments.filter { !$0.deleted }
+        let liveAtt = lib.attachments.filter { a in
+            !a.deleted || (!a.selfDeleted && a.parentID.map(restoredIDs.contains) == true)
+        }
         var attByParent: [Int64: [ZAttachment]] = [:]
         for a in liveAtt { if let p = a.parentID { attByParent[p, default: []].append(a) } }
         let attParent = Dictionary(uniqueKeysWithValues: liveAtt.map { ($0.itemID, $0.parentID) })
@@ -274,7 +282,9 @@ enum ZoteroImportPlanner {
         return ImportPlan(generated: ISO8601DateFormatter().string(from: Date()),
                           zoteroDir: zoteroDir.path, totals: totals, papers: papers,
                           duplicates: dups, orphans: orphans, collections: rules,
-                          trashedCitekeys: lib.items.filter(\.deleted).map(\.citekey).filter { !$0.isEmpty }.sorted(),
+                          trashedCitekeys: lib.items.filter { $0.deleted && !restoredIDs.contains($0.itemID) }
+                              .map(\.citekey).filter { !$0.isEmpty }.sorted(),
+                          restoredFromTrash: live.filter(\.deleted).map(\.citekey).sorted(),
                           vault: nil)
     }
 
