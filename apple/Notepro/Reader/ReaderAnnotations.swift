@@ -100,15 +100,20 @@ enum ReaderAnnotations {
         var byID: [String: LibraryAnnotation] = [:]
         var order: [String] = []
         var created = Set<String>()      // new in the reader: rects collected from every line
+        let suggested = Dictionary((store.read([LibraryAnnotation].self,
+                                               from: store.folder(folder).appendingPathComponent("suggestions.json")) ?? [])
+                                    .map { ("c:" + $0.id.dropFirst(2), $0) }, uniquingKeysWith: { a, _ in a })
         for i in 0..<doc.pageCount {
             guard let page = doc.page(at: i) else { continue }
             for p in page.annotations {
                 guard let kind = kind(of: p) else { continue }
                 let id = (p.value(forAnnotationKey: idKey) as? String) ?? newID(for: p)
+                if id.hasPrefix("s:") { continue }     // a suggestion, not yet accepted
                 // The reader never moves an annotation, so a stored one keeps its
                 // exact geometry and text (Zotero's text is better than a re-read
                 // of the page); only its comment and colour can change here.
-                if !created.contains(id), let old = byID[id] ?? stored.first(where: { $0.id == id }) {
+                if !created.contains(id), let old = byID[id] ?? stored.first(where: { $0.id == id })
+                    ?? suggested[id].map({ var a = $0; a.id = id; return a }) {
                     var a = old
                     a.comment = p.contents ?? ""
                     a.color = p.color.withAlphaComponent(1).hexString

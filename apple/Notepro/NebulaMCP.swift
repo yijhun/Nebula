@@ -12,6 +12,8 @@ import PDFKit
 /// one message per line on stdin/stdout. Nothing else may write to stdout.
 enum NebulaMCP {
     static let serverName = "nebula"
+    /// Set by `--paper <folder>`: the reader conversation's paper.
+    static var paperFolder: URL?
 
     // MARK: - Wiring into the CLIs
 
@@ -23,28 +25,32 @@ enum NebulaMCP {
 
     /// Claude Code: an --mcp-config file, and every nebula tool pre-approved.
     /// (The one tool that writes, zotero_add, asks the user itself.)
-    static func claudeArgs() -> [String] {
-        guard enabled, let exe = executable else { return [] }
-        let config: [String: Any] = ["mcpServers": [serverName: ["command": exe, "args": ["--mcp"]]]]
+    /// With `paper`, the server also offers the reader tools for that library
+    /// folder (`Nebula --mcp --paper <folder>`).
+    static func claudeArgs(paper: URL? = nil) -> [String] {
+        guard enabled || paper != nil, let exe = executable else { return [] }
+        let args = ["--mcp"] + (paper.map { ["--paper", $0.path] } ?? [])
+        let config: [String: Any] = ["mcpServers": [serverName: ["command": exe, "args": args]]]
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Nebula", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("mcp.json")
+        let file = dir.appendingPathComponent(paper.map { "mcp-paper-\($0.lastPathComponent).json" } ?? "mcp.json")
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted]),
               (try? data.write(to: file)) != nil else { return [] }
         return ["--mcp-config", file.path, "--allowedTools", "mcp__\(serverName)"]
     }
 
     /// Codex: config overrides for this run only (the user's config.toml is untouched).
-    static func codexArgs() -> [String] {
-        guard enabled, let exe = executable else { return [] }
+    static func codexArgs(paper: URL? = nil) -> [String] {
+        guard enabled || paper != nil, let exe = executable else { return [] }
         func toml(_ s: String) -> String {
             "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
+        let args = (["--mcp"] + (paper.map { ["--paper", $0.path] } ?? [])).map(toml)
         // `exec` runs with no one to approve tool calls, so they'd all be
         // refused; pre-approve ours (zotero_add still asks the user itself).
         return ["-c", "mcp_servers.\(serverName).command=\(toml(exe))",
-                "-c", "mcp_servers.\(serverName).args=[\"--mcp\"]",
+                "-c", "mcp_servers.\(serverName).args=[\(args.joined(separator: ","))]",
                 "-c", "mcp_servers.\(serverName).default_tools_approval_mode=\"approve\""]
     }
 
@@ -67,6 +73,10 @@ enum NebulaMCP {
     /// Never returns. Requests are handled on the main thread (the Zotero and
     /// ADS helpers complete there, and the confirmation dialog must run there).
     static func run() -> Never {
+        let argv = CommandLine.arguments
+        if let i = argv.firstIndex(of: "--paper"), i + 1 < argv.count {
+            paperFolder = URL(fileURLWithPath: argv[i + 1], isDirectory: true)
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)          // a dialog, never a Dock icon
         Thread.detachNewThread {
@@ -110,10 +120,15 @@ enum NebulaMCP {
         case "ping":
             reply(id, result: [:])
         case "tools/list":
-            reply(id, result: ["tools": tools])
+            reply(id, result: ["tools": (enabled ? tools : []) + (paperFolder != nil ? ReaderMCPTools.tools() : [])])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let args = params["arguments"] as? [String: Any] ?? [:]
+            if name.hasPrefix("reader_"), let folder = paperFolder {
+                let (content, isError) = ReaderMCPTools.call(name, args, folder: folder)
+                reply(id, result: ["content": content, "isError": isError])
+                return
+            }
             call(name, args) { text, isError in
                 reply(id, result: ["content": [["type": "text", "text": text]], "isError": isError])
             }

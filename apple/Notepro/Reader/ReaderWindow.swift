@@ -8,7 +8,11 @@ import AppKit
 struct ReaderWindowView: View {
     @EnvironmentObject var vault: VaultModel
     @ObservedObject private var session = ReaderSession.shared
-    @StateObject private var ctrl = ReaderController()
+    @StateObject private var ctrl: ReaderController
+
+    init(controller: ReaderController? = nil) {
+        _ctrl = StateObject(wrappedValue: controller ?? ReaderController())
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +30,18 @@ struct ReaderWindowView: View {
                     }
                     ReaderPDFRep(ctrl: ctrl)
                         .frame(minWidth: 420, minHeight: 400)
+                    if ctrl.showChat {
+                        Group {
+                            if ctrl.chatAvailable {
+                                ChatWebView(ctrl: ctrl.chat)
+                            } else {
+                                Text(LZ("Claude 只能讀論文庫裡的論文。用 ⌘T 從論文庫打開。"))
+                                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                    .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        }
+                        .frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
+                    }
                 }
             }
         }
@@ -131,6 +147,17 @@ struct ReaderToolbar: View {
                 .toggleStyle(.button).help(LZ("雙頁"))
             Toggle(isOn: Binding(get: { ctrl.dark }, set: { _ in ctrl.toggleDark() })) { Image(systemName: "moon") }
                 .toggleStyle(.button).help(LZ("深色模式（圖保留原色）"))
+            Divider().frame(height: 16)
+            Button { ctrl.briefMe() } label: { Label(LZ("導讀"), systemImage: "sparkles") }
+                .disabled(!ctrl.chatAvailable).help(LZ("Brief me：三行摘要、重要的圖、相關論文"))
+            Menu {
+                Button(LZ("這一頁")) { ctrl.suggestHighlights(wholePaper: false) }
+                Button(LZ("整篇論文")) { ctrl.suggestHighlights(wholePaper: true) }
+            } label: { Label(LZ("建議重點"), systemImage: "wand.and.stars") }
+                .menuStyle(.borderlessButton).fixedSize()
+                .disabled(!ctrl.chatAvailable).help(LZ("請 Claude 建議重點，你逐一確認"))
+            Toggle(isOn: $ctrl.showChat) { Image(systemName: "bubble.left.and.bubble.right") }
+                .toggleStyle(.button).help(LZ("和 Claude 討論這篇（⌥⌘I）"))
             Spacer()
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -222,6 +249,12 @@ struct ReaderAnnotationRow: View {
                 Text("p. \(row.page + 1)").font(.caption2).foregroundStyle(.secondary)
                 if row.author == "claude" { Text("Claude").font(.caption2).foregroundStyle(.purple) }
                 Spacer()
+                if row.id.hasPrefix("s:") {
+                    Button { ctrl.acceptSuggestion(row.id) } label: { Image(systemName: "checkmark.circle") }
+                        .buttonStyle(.borderless).help(LZ("留下這個重點"))
+                    Button { ctrl.rejectSuggestion(row.id) } label: { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.borderless).help(LZ("不要"))
+                }
                 Menu {
                     ForEach(ReaderAnnotations.palette, id: \.hex) { c in Button(LZ(c.name)) { ctrl.setColor(c.hex, id: row.id) } }
                     Divider()

@@ -34,6 +34,57 @@ final class ReaderSession: ObservableObject {
     /// Set by the "Open Paper" menu command; the reader window shows its picker.
     @Published var requestQuickOpen = false
 
+    /// A place to show once the tab is on screen (from a nebula://paper link).
+    struct Goto: Equatable { let tab: UUID; let page: Int; let quote: String? }
+    @Published var pendingGoto: Goto?
+
+    // MARK: paper links
+
+    /// nebula://paper/<citekey>?page=N&quote=… → open that paper at that place.
+    func openLink(_ url: URL) {
+        guard let link = Self.parse(url), let folder = folder(forCitekey: link.key) else { return }
+        openFolder(folder)
+        if let id = activeID { pendingGoto = Goto(tab: id, page: link.page, quote: link.quote) }
+    }
+
+    /// Is the link's quote really on its page? (Unparsable or unknown → false.)
+    func verify(link: String) -> Bool {
+        guard let url = URL(string: link), let l = Self.parse(url), let folder = folder(forCitekey: l.key),
+              let doc = verifyDoc(folder), let page = doc.page(at: l.page) else { return false }
+        guard let q = l.quote, !q.isEmpty else { return true }
+        return ReaderMCPTools.quoteOnPage(q, page: page)
+    }
+
+    static func parse(_ url: URL) -> (key: String, page: Int, quote: String?)? {
+        guard url.scheme == "nebula", url.host == "paper" else { return nil }
+        let key = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !key.isEmpty else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let page = max(1, Int(items.first { $0.name == "page" }?.value ?? "1") ?? 1) - 1
+        return (key, page, items.first { $0.name == "quote" }?.value)
+    }
+
+    private var keyToFolder: [String: String] = [:]
+    func folder(forCitekey key: String) -> String? {
+        if store.meta(folder: key) != nil { return key }
+        if keyToFolder.isEmpty {
+            for p in store.allPapers() {
+                keyToFolder[p.meta.citekey] = p.folder
+                for a in p.meta.aliases { keyToFolder[a] = p.folder }
+            }
+        }
+        return keyToFolder[key]
+    }
+
+    private var verifyDocs: [String: PDFDocument] = [:]
+    private func verifyDoc(_ folder: String) -> PDFDocument? {
+        if let d = verifyDocs[folder] { return d }
+        guard let d = PDFDocument(url: store.folder(folder).appendingPathComponent("paper.pdf")) else { return nil }
+        if verifyDocs.count > 3 { verifyDocs.removeAll() }
+        verifyDocs[folder] = d
+        return d
+    }
+
     /// How many documents stay open; the rest of the tabs are suspended.
     static let liveDocuments = 5
     private var docs: [UUID: PDFDocument] = [:]

@@ -173,6 +173,9 @@ struct RootView: View {
                 tabs.active.statusText = "已自動彙整本週待辦 → \(url.lastPathComponent)"
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .nebulaShowReader)) { _ in
+            openWindow(id: "reader")
+        }
         .onChange(of: selection) { _, newValue in
             // Open only on a single selection; multi-select is for batch ops.
             if newValue.count == 1, let url = newValue.first {

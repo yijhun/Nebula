@@ -25,12 +25,18 @@ final class ReaderPage: PDFPage {
         let bounds = self.bounds(for: box)
         let figs = Self.figureRegions[ObjectIdentifier(doc)]?[doc.index(for: self)] ?? []
 
+        // Highlights keep their colour: their strips are left out of the
+        // inversion, like paper under a highlighter. Ink and sticky notes are
+        // drawn again after it, so their colours survive too.
+        let highlights = annotations.filter { ReaderAnnotations.kind(of: $0) == .highlight }.map(\.bounds)
+        let redraw = annotations.filter { [.ink, .note].contains(ReaderAnnotations.kind(of: $0)) }
+
         context.saveGState()
         // super.draw leaves the context in page space with the box's origin;
-        // clip to the page minus the figures (even-odd), then invert.
+        // clip to the page minus the figures and highlights (even-odd), then invert.
         let path = CGMutablePath()
         path.addRect(bounds)
-        for r in figs { path.addRect(r.intersection(bounds)) }
+        for r in figs + highlights { path.addRect(r.intersection(bounds)) }
         context.addPath(path)
         context.clip(using: .evenOdd)
         context.setBlendMode(.difference)
@@ -41,5 +47,10 @@ final class ReaderPage: PDFPage {
         context.setFillColor(CGColor(gray: 0.12, alpha: 1))
         context.fill(bounds)
         context.restoreGState()
+        for a in redraw where a.shouldDisplay {
+            context.saveGState()
+            a.draw(with: box, in: context)
+            context.restoreGState()
+        }
     }
 }

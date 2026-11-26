@@ -21,6 +21,8 @@ interface Attachment { path: string; name: string; isDir?: boolean }
 interface HostState {
   accounts: Account[]; activeID: string; mode: string; codexInstalled: boolean; vault: string;
   model: string; models: ModelOption[]; lang: string; attachments: Attachment[];
+  /** "paper" when the chat sits in the reader, bound to one paper. */
+  scope?: string; paper?: { citekey: string; title: string };
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -157,20 +159,29 @@ function render(): void {
 
     if (!chat.items.length) {
       const a = activeAccount();
-      log.innerHTML = `<div class="empty"><b>${a ? esc(a.label) : "Claude"}</b><br>
+      log.innerHTML = host.scope === "paper"
+        ? `<div class="empty"><b>${a ? esc(a.label) : "Claude"}</b><br>
+          ${t("讀這篇：")}${esc(host.paper?.title || host.paper?.citekey || "")}<br>
+          ${t("問這篇論文、這一頁、選取的段落或某張圖。回答會附頁碼連結。")}</div>`
+        : `<div class="empty"><b>${a ? esc(a.label) : "Claude"}</b><br>
         ${t("在「")}${esc(host.vault || t("你的 vault"))}${t("」裡對話 — 可以問問題、整理筆記、改寫段落。")}<br>
         ${t("預設會附上目前開啟的筆記。")}</div>`;
     } else {
-      log.innerHTML = chat.items.map((it) => {
+      log.innerHTML = chat.items.map((it, i) => {
         switch (it.kind) {
           case "user": return `<div class="msg user">${esc(it.text)}</div>`;
-          case "assistant": return `<div class="msg asst">${renderBlocks(it.blocks, it.streaming)}</div>`;
+          case "assistant": {
+            const toNote = host.scope === "paper" && !it.streaming
+              ? `<button class="tonote" data-tonote="${i}" title="${t("送進主視窗的筆記")}">${t("→ 筆記")}</button>` : "";
+            return `<div class="msg asst">${toNote}${renderBlocks(it.blocks, it.streaming)}</div>`;
+          }
           case "notice": return `<div class="msg notice ${it.level}">${esc(it.text)}</div>`;
           case "done": return it.seconds > 0 ? `<div class="done">${it.seconds.toFixed(1)}s</div>` : "";
         }
       }).join("");
     }
     log.querySelectorAll("details").forEach((d, i) => { if (open.has(i)) d.open = true; });
+    markPaperLinks();
     if (nearBottom) log.scrollTop = log.scrollHeight;
     updateComposer();
     renderAttachments();
@@ -178,8 +189,39 @@ function render(): void {
   });
 }
 
+// ── Links: nebula://paper/… opens the reader there; other links open in the
+// browser. Paper links are checked once by the host (is the quote on that
+// page?) and marked when they are not.
+const linkStatus = new Map<string, boolean>();
+const asked = new Set<string>();
+function markPaperLinks(): void {
+  const fresh: string[] = [];
+  log.querySelectorAll<HTMLAnchorElement>('a[href^="nebula:"]').forEach((a) => {
+    const href = a.getAttribute("href") ?? "";
+    const ok = linkStatus.get(href);
+    a.classList.toggle("unverified", ok === false);
+    if (ok === undefined && !asked.has(href)) { asked.add(href); fresh.push(href); }
+  });
+  if (fresh.length && !chat.busy) post({ type: "verifyLinks", hrefs: fresh });
+  else fresh.forEach((h) => asked.delete(h));     // ask once the reply has finished
+}
+
+function assistantText(i: number): string {
+  const it = chat.items[i];
+  if (!it || it.kind !== "assistant") return "";
+  return it.blocks.filter((b): b is Extract<Block, { type: "text" }> => b.type === "text").map((b) => b.text).join("\n\n");
+}
+
 log.addEventListener("click", (e) => {
   const el = e.target as HTMLElement;
+  const link = el.closest("a");
+  if (link && link.getAttribute("href")) {
+    e.preventDefault();
+    post({ type: "openLink", href: link.getAttribute("href") });
+    return;
+  }
+  const toNote = el.getAttribute("data-tonote");
+  if (toNote) { post({ type: "toNote", text: assistantText(Number(toNote)) }); return; }
   const openPath = el.getAttribute("data-open");
   if (openPath) { post({ type: "openFile", path: openPath }); return; }
   const rid = el.getAttribute("data-revert");
@@ -348,6 +390,18 @@ menu.addEventListener("click", (e) => {
     reduce(chat, ev);
     render();
   },
+  /** Send text as if the user typed it (the reader's Brief me / Suggest highlights). */
+  submit(text: string): void {
+    input.value = text;
+    submit();
+  },
+  linkStatus(json: string): void {
+    try {
+      const m = JSON.parse(json) as Record<string, boolean>;
+      for (const [k, v] of Object.entries(m)) linkStatus.set(k, v);
+    } catch { return; }
+    markPaperLinks();
+  },
   setState(json: string): void {
     try { host = JSON.parse(json) as HostState; } catch { return; }
     setLang(host.lang === "en" ? "en" : "zh");
@@ -369,12 +423,14 @@ function applyLang(): void {
   modeSel.options[1]!.text = t("唯讀");
   modelSel.title = t("模型");
   $("new").textContent = t("新對話");
-  $("attNote").textContent = t("＋ 目前筆記");
+  $("attNote").textContent = host.scope === "paper" ? t("＋ 目前頁面") : t("＋ 目前筆記");
   $("attSel").textContent = t("＋ 選取內容");
   $("attFile").textContent = t("＋ 檔案");
   $("attDir").textContent = t("＋ 資料夾");
   $("drop").textContent = t("放開以附加檔案");
-  input.placeholder = t("問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）");
+  input.placeholder = host.scope === "paper"
+    ? t("問這篇論文…（Enter 送出，Shift+Enter 換行）")
+    : t("問問題、請它改筆記…（Enter 送出，Shift+Enter 換行）");
   updateComposer();
 }
 

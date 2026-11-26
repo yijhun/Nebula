@@ -4,7 +4,9 @@ import AppKit
 import Combine
 
 /// Drives the reader window's one PDFView: attaches the active tab's
-/// document, remembers positions, find, annotations, capture and keys.
+/// document, remembers positions, find, annotations, capture, keys, and the
+/// chat about the open paper.
+@MainActor
 final class ReaderController: ObservableObject {
     let session = ReaderSession.shared
     weak var pdfView: ReaderPDFView? { didSet { if pdfView != nil { attach() } } }
@@ -25,6 +27,13 @@ final class ReaderController: ObservableObject {
     @Published var rows: [ReaderAnnotations.Row] = []
     @Published var outline: [OutlineRow] = []
     @Published var showQuickOpen = false
+    @Published var showChat = UserDefaults.standard.bool(forKey: "readerShowChat") {
+        didSet { UserDefaults.standard.set(showChat, forKey: "readerShowChat"); if showChat { bindChat() } }
+    }
+
+    /// The reader's own conversation, bound to the active library paper. It
+    /// starts a CLI only when a message is sent (PAPER-LIBRARY.md §10).
+    let chat = ChatController()
 
     // Find
     @Published var findQuery = ""
@@ -41,6 +50,21 @@ final class ReaderController: ObservableObject {
     init() {
         session.$generation.dropFirst().receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.attach() }.store(in: &bag)
+        session.$pendingGoto.compactMap { $0 }.receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applyPendingGoto() }.store(in: &bag)
+        chat.readerState = { [weak self] in
+            guard let self, let pv = self.pdfView, let doc = pv.document, let page = pv.currentPage else { return (0, "") }
+            let sel = pv.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return (doc.index(for: page) + 1, String(sel.prefix(4000)))
+        }
+        chat.onPaperLink = { [weak self] url in self?.session.openLink(url) }
+        chat.onToNote = { [weak self] text in
+            let key = self?.session.active?.folder.flatMap { self?.session.store.meta(folder: $0)?.citekey } ?? ""
+            NotificationCenter.default.post(name: .noteproInsertIntoNote, object: nil,
+                                            userInfo: ["text": "\n\(text)\(key.isEmpty ? "" : " [@\(key)]")\n"])
+            self?.status = LZ("已送進筆記")
+        }
+        chat.onTurnEnd = { [weak self] in self?.loadSuggestions() }
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in self?.detachCurrent(); self?.session.saveAll() }.store(in: &bag)
     }
@@ -68,8 +92,11 @@ final class ReaderController: ObservableObject {
             DispatchQueue.main.async { pv.go(to: PDFDestination(page: page, at: point)) }
         }
         clearFind()
+        loadSuggestions()
         refreshRows()
         outline = Self.flatten(doc.outlineRoot, depth: 0, doc: doc)
+        if showChat { bindChat() }
+        applyPendingGoto()
         status = tab.folder.map { "Library: \($0)" } ?? tab.url.lastPathComponent
         pv.window?.title = tab.title
     }
@@ -92,6 +119,95 @@ final class ReaderController: ObservableObject {
     func pageChanged() {
         guard let id = attachedID, let pv = pdfView else { return }
         session.updatePosition(id, currentPosition(pv))
+    }
+
+    // MARK: chat
+
+    /// Point the chat at the active tab's paper (library papers only).
+    func bindChat() {
+        guard let tab = session.active, let f = tab.folder, let m = session.store.meta(folder: f) else {
+            chat.setPaper(nil); return
+        }
+        chat.setPaper(.init(folder: session.store.folder(f), citekey: m.citekey, title: m.title))
+    }
+
+    var chatAvailable: Bool { session.active?.folder != nil }
+
+    func briefMe() {
+        showChat = true
+        chat.submit(LZ("導讀這篇：三行摘要、最重要的 2–3 張圖（附頁碼連結），以及它和我其他論文的關係（如果找得到）。"))
+    }
+
+    func suggestHighlights(wholePaper: Bool) {
+        showChat = true
+        let page = (pdfView?.currentPage).flatMap { p in pdfView?.document?.index(for: p) }.map { $0 + 1 } ?? 1
+        let scope = wholePaper ? LZ("整篇論文") : String(format: LZ("第 %d 頁"), page)
+        chat.submit(String(format: LZ("幫我建議重點，範圍：%@。類別：Result、Numbers、Data & Method、Caveat、Relevant to me。用 reader_suggest_highlights，最多 8 個，理由用英文。"), scope))
+    }
+
+    // MARK: going to a place
+
+    func applyPendingGoto() {
+        guard let g = session.pendingGoto, g.tab == session.activeID, attachedID == g.tab,
+              let pv = pdfView, let doc = pv.document, let page = doc.page(at: g.page) else { return }
+        session.pendingGoto = nil
+        if let q = g.quote, let rects = ReaderMCPTools.locate(q, on: page, in: doc), let r = rects.first {
+            let sel = doc.findString(q, withOptions: .caseInsensitive).first { $0.pages.contains(page) }
+            pv.go(to: PDFDestination(page: page, at: CGPoint(x: r[0], y: r[3] + 60)))
+            if let sel { pv.setCurrentSelection(sel, animate: true) }
+        } else {
+            pv.go(to: page)
+        }
+    }
+
+    // MARK: suggested highlights (from Claude)
+
+    private var suggestionsURL: URL? {
+        session.active?.folder.map { session.store.folder($0).appendingPathComponent("suggestions.json") }
+    }
+
+    /// Show suggestions.json as pending, dashed highlights (ids "s:…").
+    func loadSuggestions() {
+        guard let url = suggestionsURL, let doc = pdfView?.document else { return }
+        let sugg = session.store.read([LibraryAnnotation].self, from: url) ?? []
+        var shown = Set<String>()
+        for i in 0..<doc.pageCount {
+            for p in doc.page(at: i)?.annotations ?? [] {
+                if let id = p.value(forAnnotationKey: ReaderAnnotations.idKey) as? String, id.hasPrefix("s:") { shown.insert(id) }
+            }
+        }
+        for s in sugg where !shown.contains(s.id) { ReaderAnnotations.add(s, to: doc) }
+        if sugg.contains(where: { !shown.contains($0.id) }) {
+            sidebar = .annotations; showSidebar = true
+            status = String(format: LZ("Claude 建議了 %d 個重點，請逐一確認"), sugg.count)
+        }
+        refreshRows()
+    }
+
+    func acceptSuggestion(_ id: String) {
+        guard let doc = pdfView?.document else { return }
+        let newID = "c:" + id.dropFirst(2)
+        for (_, p) in ReaderAnnotations.parts(id: id, in: doc) {
+            p.setValue(newID, forAnnotationKey: ReaderAnnotations.idKey)
+            p.border = nil                                  // no longer dashed: accepted
+        }
+        ReaderAnnotations.markDirty(doc)
+        session.saveActive()        // keeps Claude's exact quote and reason
+        dropSuggestion(id)
+        refreshRows()
+    }
+
+    func rejectSuggestion(_ id: String) {
+        guard let doc = pdfView?.document else { return }
+        for (page, p) in ReaderAnnotations.parts(id: id, in: doc) { page.removeAnnotation(p) }
+        dropSuggestion(id)
+        refreshRows()
+    }
+
+    private func dropSuggestion(_ id: String) {
+        guard let url = suggestionsURL else { return }
+        let rest = (session.store.read([LibraryAnnotation].self, from: url) ?? []).filter { $0.id != id }
+        try? session.store.write(rest, to: url)
     }
 
     // MARK: annotations
@@ -257,6 +373,7 @@ final class ReaderController: ObservableObject {
             case ([.command], "g"): self.findStep(1); return nil
             case ([.command, .shift], "g"): self.findStep(-1); return nil
             case ([.command], "e"): self.highlight(); return nil
+            case ([.command, .option], "i"): self.showChat.toggle(); return nil
             default: return e
             }
         }

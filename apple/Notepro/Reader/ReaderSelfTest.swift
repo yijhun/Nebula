@@ -92,6 +92,12 @@ enum ReaderSelfTest {
                 check(px.at(50, 50) < 0.25, "page background drawn dark (got \(String(format: "%.2f", px.at(50, 50))))")
                 check(px.at(400, 450) > 0.75, "figure region keeps its light background (got \(String(format: "%.2f", px.at(400, 450))))")
             }
+            if let page = doc2.page(at: 0) {
+                // The imported red highlight sits at x 72–200, y 700–714.
+                let px = pixels(page)
+                check(px.at(190, 707) > 0.4 && px.at(300, 600) < 0.25,
+                      "a highlight keeps its colour strip while the page around it is dark (got \(String(format: "%.2f", px.at(190, 707))))")
+            }
             ReaderPage.dark = false
             if let page = doc2.page(at: 1) {
                 check(pixels(page).at(50, 50) > 0.9, "light mode draws the page normally")
@@ -124,6 +130,51 @@ enum ReaderSelfTest {
             check(!session.tabs.contains { $0.id == first }, "tab closed")
             session.reopenClosed()
             check(session.active?.folder == folder && session.active?.position.page == 2, "closed tab reopens at its page")
+
+            print("Paper links in the chat")
+            check(session.verify(link: "nebula://paper/\(folder)?page=1&quote=beta%20gamma%20delta"), "a quote that is on its page verifies")
+            check(!session.verify(link: "nebula://paper/\(folder)?page=2&quote=beta%20gamma%20delta"), "the same quote on the wrong page does not")
+            check(!session.verify(link: "nebula://paper/noSuchPaper?page=1&quote=Alpha"), "an unknown citekey does not")
+            let parsed = ReaderSession.parse(URL(string: "nebula://paper/\(folder)?page=3&quote=Theta%20iota")!)
+            check(parsed?.key == folder && parsed?.page == 2 && parsed?.quote == "Theta iota", "links parse to citekey, 0-based page and quote")
+            session.openLink(URL(string: "nebula://paper/\(folder)?page=3&quote=Theta%20iota")!)
+            check(session.active?.folder == folder && session.pendingGoto?.page == 2 && session.pendingGoto?.quote == "Theta iota",
+                  "opening a link selects the paper and queues the place to show")
+
+            print("Claude's reader tools (offline)")
+            let (info, e1) = ReaderMCPTools.call("reader_paper", [:], folder: dir)
+            check(!e1 && ((info.first?["text"] as? String) ?? "").contains("pages: 3"), "reader_paper describes the paper")
+            let (txt, e2) = ReaderMCPTools.call("reader_page_text", ["from": 2, "to": 3], folder: dir)
+            let t2 = (txt.first?["text"] as? String) ?? ""
+            check(!e2 && t2.contains("--- page 2 ---") && t2.contains("Epsilon") && t2.contains("Theta"), "reader_page_text returns the asked pages")
+            let (img, e3) = ReaderMCPTools.call("reader_figure", ["label": "Figure 1"], folder: dir)
+            check(!e3 && img.contains { $0["type"] as? String == "image" }, "reader_figure returns an image")
+            let (sg, e4) = ReaderMCPTools.call("reader_suggest_highlights", ["highlights": [
+                ["page": 1, "quote": "beta gamma", "category": "Result", "reason": "Key claim."],
+                ["page": 2, "quote": "not on this page at all", "category": "Caveat"],
+            ]], folder: dir)
+            let sugg = store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("suggestions.json")) ?? []
+            check(!e4 && sugg.count == 1 && sugg[0].author == "claude" && sugg[0].comment == "[Result] Key claim."
+                  && sugg[0].color == "#ffd400" && (sugg[0].rects?.count ?? 0) >= 1,
+                  "a found quote becomes a pending suggestion; a missing one is reported (\((sg.first?["text"] as? String) ?? ""))")
+
+            print("Accepting a suggestion")
+            guard let doc3 = ReaderDocument.open(dir.appendingPathComponent("paper.pdf")) else { throw ZoteroImportError.missing("reopen") }
+            ReaderAnnotations.load(into: doc3, folder: folder, store: store)
+            ReaderAnnotations.add(sugg[0], to: doc3)
+            check(ReaderAnnotations.rows(in: doc3).contains { $0.id == sugg[0].id && $0.author == "claude" }, "suggestion shown as a Claude row")
+            ReaderAnnotations.markDirty(doc3)
+            ReaderAnnotations.save(from: doc3, folder: folder, store: store)
+            let notSaved = store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("annotations.json")) ?? []
+            check(!notSaved.contains { $0.id.hasPrefix("s:") }, "a pending suggestion is never saved as an annotation")
+            let accepted = "c:" + sugg[0].id.dropFirst(2)
+            for (_, p) in ReaderAnnotations.parts(id: sugg[0].id, in: doc3) { p.setValue(accepted, forAnnotationKey: ReaderAnnotations.idKey) }
+            ReaderAnnotations.markDirty(doc3)
+            ReaderAnnotations.save(from: doc3, folder: folder, store: store)
+            let withAccepted = store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("annotations.json")) ?? []
+            let acc = withAccepted.first { $0.id == accepted }
+            check(acc?.author == "claude" && acc?.text == "beta gamma" && acc?.comment == "[Result] Key claim.",
+                  "an accepted suggestion is saved with Claude's quote and reason")
         } catch {
             print("  FAIL  \(error)")
             failures += 1
