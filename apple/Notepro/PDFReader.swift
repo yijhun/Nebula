@@ -23,8 +23,9 @@ final class PDFController: ObservableObject {
 
     /// A region was rubber-band selected (view coords). Clip it out of the page
     /// as BOTH a 2x PNG (for note preview) and a cropped vector PDF (for LaTeX
-    /// export), save them to the vault, and put the embed markdown on the
-    /// clipboard so it can be pasted into any note.
+    /// export), save them to the vault, insert the embed into the open note,
+    /// and put the cropped PDF on the clipboard so ⌘V in Keynote pastes the
+    /// figure itself.
     func captureRegion(_ viewRect: CGRect, in vault: VaultModel) {
         guard let pv = pdfView,
               let page = pv.page(for: CGPoint(x: viewRect.midX, y: viewRect.midY), nearest: true)
@@ -33,17 +34,15 @@ final class PDFController: ObservableObject {
         let pageRect = pv.convert(viewRect, to: page)
         guard pageRect.width > 8, pageRect.height > 8 else { status = "框選範圍太小"; return }
 
-        // Work on a COPY so the on-screen page keeps its full bounds.
-        guard let clip = page.copy() as? PDFPage else { status = "擷取失敗"; return }
-        clip.setBounds(pageRect, for: .cropBox)
-        clip.setBounds(pageRect, for: .mediaBox)
+        // Cropped vector PDF (keeps figures scalable in LaTeX and Keynote).
+        // Works on a copy of the page, so the on-screen page keeps its bounds.
+        guard let vecData = FigureClipboard.croppedPDF(page: page, rect: pageRect),
+              let clip = PDFDocument(data: vecData)?.page(at: 0)
+        else { status = "擷取失敗"; return }
 
         // 2x raster for markdown preview.
         let png2x = clip.thumbnail(of: CGSize(width: pageRect.width * 2, height: pageRect.height * 2),
                                    for: .cropBox)
-        // Cropped vector PDF (keeps figures infinitely scalable in LaTeX).
-        let vec = PDFDocument()
-        vec.insert(clip, at: 0)
 
         // Save both under one basename in the attachment folder.
         let d = UserDefaults.standard
@@ -60,21 +59,21 @@ final class PDFController: ObservableObject {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
         else { status = "擷取失敗（無法轉圖）"; return }
         do { try png.write(to: pngURL) } catch { status = "存檔失敗：\(error.localizedDescription)"; return }
-        vec.write(to: pdfURL)
+        try? vecData.write(to: pdfURL)
 
-        // Embed markdown, with source attribution.
+        // Embed markdown, with source attribution (generated content is English).
         let pageNo = (document?.index(for: page) ?? 0) + 1
         let source = key.isEmpty ? url.lastPathComponent : "[@\(key)]"
-        let md = "\n![[\(pngURL.lastPathComponent)]]\n*圖：擷自 \(source) p.\(pageNo)*\n"
-        // Straight into the note being edited in the main window; the clipboard
-        // copy is the fallback when no note is open there.
+        let md = "\n![[\(pngURL.lastPathComponent)]]\n*Figure from \(source), p. \(pageNo)*\n"
+        // Straight into the note being edited in the main window.
         NotificationCenter.default.post(name: .noteproInsertIntoNote, object: nil,
                                         userInfo: ["text": md])
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(md, forType: .string)
+        // The clipboard gets the figure itself, for ⌘V in Keynote (or Finder).
+        let copied = FigureClipboard.copy(vecData, name: base)
         vault.refresh()
-        status = "已插入 \(pngURL.lastPathComponent)（另存向量 PDF）— 也複製了嵌入語法"
+        status = copied
+            ? "已插入 \(pngURL.lastPathComponent)，並複製 PDF（可直接貼進 Keynote）"
+            : "已插入 \(pngURL.lastPathComponent)（複製 PDF 失敗）"
         // Capture mode stays ON so several figures can be grabbed in a row;
         // toggle it off (or press Esc mid-drag) when done.
     }
