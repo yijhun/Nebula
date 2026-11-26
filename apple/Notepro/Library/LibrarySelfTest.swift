@@ -20,7 +20,7 @@ enum LibrarySelfTest {
             let t = plan.totals
 
             print("Every live item is planned, nothing else")
-            check(t.papers == 15 && t.trashedItems == 1, "15 papers planned, 1 trashed item left out (got \(t.papers), \(t.trashedItems))")
+            check(t.papers == 16 && t.trashedItems == 1, "16 papers planned, 1 trashed item left out (got \(t.papers), \(t.trashedItems))")
             check(t.invariantFailures.isEmpty, "invariants hold \(t.invariantFailures)")
 
             print("Identifiers and duplicates")
@@ -28,6 +28,7 @@ enum LibrarySelfTest {
                   "same DOI in different case and form is one duplicate group")
             check(byKey["arxivOnly2021"]?.ids.arxiv == "2101.00001", "arXiv id read from the arXiv DOI / extra field")
             check(byKey["smithDisks2020"]?.ids.doi == "10.1/abc", "DOI normalised")
+            check(byKey["pinned2022"]?.folder == "pinned2022", "citekey pinned in extra (\"Citation Key: …\") is used")
             check(!plan.duplicates.contains { $0.citekeys.contains("chapterOne2014") },
                   "chapters sharing a book title but not a DOI are not duplicates")
             check(plan.duplicates.contains { Set($0.citekeys) == ["preprintSame2020", "publishedSame2020"] },
@@ -71,10 +72,11 @@ enum LibrarySelfTest {
 
             print("Vault citations")
             let v = ZoteroImportReport.checkVault(fx.vault, plan: plan)
-            check(v.unresolved == ["eDisk2021", "missingKey2001", "trashed2018"], "unresolved keys found, email address ignored (got \(v.unresolved))")
+            check(v.unresolved == ["eDisk2021", "latexOnly2003", "missingKey2001", "trashed2018"],
+                  "unresolved keys found incl. \\autocite/\\textcite, email address ignored (got \(v.unresolved))")
             check(v.inZoteroTrash == ["trashed2018"], "a cited key in Zotero's trash is called out")
             check(v.onlyInVaultBib == ["eDisk2021"], "a cited key only in a vault .bib file is called out")
-            check(v.notFound == ["missingKey2001"], "a cited key found nowhere is called out")
+            check(v.notFound == ["latexOnly2003", "missingKey2001"], "a cited key found nowhere is called out")
 
             print("Report files")
             let out = fx.root.appendingPathComponent("out")
@@ -113,6 +115,8 @@ enum LibrarySelfTest {
             Disks [@smithDisks2020; @missingKey2001] and more \\citep{smithDisks2020a, eDisk2021}.
             Mail me@example.com, not a citation. Old one [@trashed2018].
             """.write(to: vault.appendingPathComponent("note.md"), atomically: true, encoding: .utf8)
+            try "Cited as \\autocite{pinned2022}, \\textcite[p.~3]{chapterOne2014} and \\autocite{latexOnly2003}.\n"
+                .write(to: vault.appendingPathComponent("paper.tex"), atomically: true, encoding: .utf8)
             try "@article{eDisk2021,\n  title={A disk}\n}\n"
                 .write(to: vault.appendingPathComponent("refs.bib"), atomically: true, encoding: .utf8)
 
@@ -147,7 +151,7 @@ enum LibrarySelfTest {
         // 5 arXiv-only, 6 trashed (its attachment 22 and annotation 43 go
         // with it, as in Zotero, where only the parent is in deletedItems),
         // 7 two PDFs, 8–12 fillers, 13–14 book chapters sharing a title,
-        // 15–16 a preprint and its journal version.
+        // 15–16 a preprint and its journal version, 17 citekey pinned in extra.
         // Attachments 20–25, annotations 40–44, notes 60–61.
         static let rows: String = {
             var s = ""
@@ -174,6 +178,7 @@ enum LibrarySelfTest {
             item(14, "CHAP0014", "chapterTwo2014", "Protostars and Planets VI", doi: "10.2458/two")
             item(15, "PREP0015", "preprintSame2020", "A result first posted on arXiv", url: "http://arxiv.org/abs/2202.00002")
             item(16, "PUBL0016", "publishedSame2020", "A result first posted on arXiv", doi: "10.9/pub")
+            item(17, "PINN0017", "", "Paper whose key is pinned in extra", extra: "Citation Key: pinned2022")
             s += """
             INSERT INTO items VALUES (20,2,'PDFA0001'),(21,2,'LINKA001'),(22,2,'PDFF0001'),(23,2,'PDFG0001'),(24,2,'PDFG0002'),(25,2,'PDFORPH1');
             INSERT INTO itemAttachments VALUES (20,1,0,'application/pdf','storage:a.pdf'),

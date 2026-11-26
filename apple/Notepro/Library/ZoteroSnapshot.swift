@@ -113,7 +113,19 @@ struct ZItem {
     let tags: [ZTag]
     let collectionIDs: [Int64]
     let deleted: Bool
-    var citekey: String { fields["citationKey"] ?? "" }
+    /// Zotero 7's `citationKey` field, else a key pinned in `extra` as
+    /// `Citation Key: …` or `tex.citationkey: …` (as `ZoteroWeb` reads it).
+    var citekey: String {
+        if let k = fields["citationKey"]?.trimmingCharacters(in: .whitespaces), !k.isEmpty { return k }
+        for line in (fields["extra"] ?? "").components(separatedBy: .newlines) {
+            if let r = line.range(of: #"(?i)^\s*(citation key|tex\.citationkey)\s*:\s*"#,
+                                  options: .regularExpression) {
+                let key = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+                if !key.isEmpty { return key }
+            }
+        }
+        return ""
+    }
 }
 
 struct ZCollection {

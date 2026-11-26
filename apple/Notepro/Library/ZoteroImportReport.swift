@@ -100,7 +100,7 @@ enum ZoteroImportReport {
                           notFound: unresolved.subtracting(trash).subtracting(bib).sorted())
     }
 
-    /// Pandoc `[@key; @key2]` and LaTeX `\cite{a,b}` (`\citep`, `\citet`, …).
+    /// Pandoc `[@key; @key2]` and LaTeX `\cite{a,b}`, `\autocite{…}`, `\textcite[…]{…}`, ….
     static func citedKeys(in s: String) -> Set<String> {
         var out = Set<String>()
         let ns = s as NSString
@@ -113,11 +113,13 @@ enum ZoteroImportReport {
                 out.insert(ins.substring(with: k.range(at: 1)))
             }
         }
-        let cite = try! NSRegularExpression(pattern: #"\\cite[a-zA-Z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)\}"#)
+        // Any command with "cite" in it: \cite, \citep, \autocite (the
+        // editor's default), \textcite, \parencite, \footcite, \Citet, …
+        let cite = try! NSRegularExpression(pattern: #"\\[A-Za-z]*[cC]ite[A-Za-z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)\}"#)
         for m in cite.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
             for k in ns.substring(with: m.range(at: 1)).split(separator: ",") {
                 let key = k.trimmingCharacters(in: .whitespaces)
-                if !key.isEmpty { out.insert(key) }
+                if !key.isEmpty, key != "*" { out.insert(key) }
             }
         }
         return out
