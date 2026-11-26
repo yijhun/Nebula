@@ -125,3 +125,7 @@ jobs:
       - name: Library self-test
         timeout-minutes: 5
         run: apple/build/Build/Products/Release/Nebula.app/Contents/MacOS/Nebula --library-selftest
+
+      - name: Reader self-test
+        timeout-minutes: 5
+        run: apple/build/Build/Products/Release/Nebula.app/Contents/MacOS/Nebula --reader-selftest

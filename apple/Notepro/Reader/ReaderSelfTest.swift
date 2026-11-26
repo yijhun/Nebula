@@ -1,0 +1,173 @@
+import Foundation
+import PDFKit
+import AppKit
+import CoreText
+
+/// `Nebula --reader-selftest`: checks the reader's logic without a window —
+/// annotations round-tripping through annotations.json, highlighting a
+/// selection, dark mode keeping figures, and tab suspension. Uses a PDF it
+/// draws itself; touches no user data or settings.
+enum ReaderSelfTest {
+
+    static func run() -> Never {
+        var failures = 0
+        func check(_ ok: Bool, _ what: String) {
+            print("  \(ok ? "PASS" : "FAIL")  \(what)")
+            if !ok { failures += 1 }
+        }
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("nebula-reader-selftest-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        do {
+            let store = PaperLibraryStore(root: root)
+            let folder = "testPaper2020"
+            let dir = store.folder(folder)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try makePDF(dir.appendingPathComponent("paper.pdf"))
+            try store.write(PaperMeta(citekey: folder, ids: PlanIDs(), title: "Test paper", year: "2020",
+                                      bibliographic: Bibliographic(itemType: "journalArticle", fields: [:], creators: []),
+                                      pdf: "paper.pdf", added: ""),
+                            to: dir.appendingPathComponent("meta.json"))
+            try store.write([
+                LibraryAnnotation(id: "z:H1", kind: .highlight, page: 0, rects: [[72, 700, 200, 714]],
+                                  color: "#ff6666", text: "Alpha", comment: "first", author: "user"),
+                LibraryAnnotation(id: "z:I1", kind: .ink, page: 1, paths: [[100, 100, 150, 150, 200, 120]],
+                                  width: 2, color: "#2ea8e5"),
+                LibraryAnnotation(id: "z:N1", kind: .note, page: 2, rects: [[300, 300, 320, 320]],
+                                  color: "#ffd400", comment: "a note"),
+            ], to: dir.appendingPathComponent("annotations.json"))
+            try store.write([LibraryFigure(label: "Figure 1", page: 1, rect: [300, 400, 500, 600], source: "test")],
+                            to: dir.appendingPathComponent("figures.json"))
+
+            print("Loading annotations.json into the reader")
+            guard let doc = ReaderDocument.open(dir.appendingPathComponent("paper.pdf")) else {
+                throw ZoteroImportError.missing("test PDF did not open")
+            }
+            check(doc.page(at: 0) is ReaderPage, "pages use the reader's page class (needed for dark mode)")
+            ReaderAnnotations.load(into: doc, folder: folder, store: store)
+            let rows = ReaderAnnotations.rows(in: doc)
+            check(rows.count == 3, "highlight, ink and note shown (got \(rows.count))")
+            check(rows.first { $0.id == "z:H1" }?.comment == "first" && rows.first { $0.id == "z:H1" }?.color == "#ff6666",
+                  "comment and colour come back")
+            check(!ReaderAnnotations.dirty(doc), "a freshly loaded paper has nothing to save")
+
+            print("Highlighting a selection, commenting, saving")
+            let pv = PDFView(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
+            pv.document = doc
+            guard let sel = doc.findString("gamma", withOptions: .caseInsensitive).first else {
+                throw ZoteroImportError.missing("search found nothing in the test PDF")
+            }
+            pv.setCurrentSelection(sel, animate: false)
+            check(ReaderAnnotations.highlightSelection(in: pv, hex: "#5fb236"), "selection highlighted")
+            let newRow = ReaderAnnotations.rows(in: doc).first { $0.id.hasPrefix("n:") }
+            check(newRow?.text.lowercased().contains("gamma") == true, "the new highlight's text is read from the page")
+            if let id = newRow?.id { ReaderAnnotations.setComment("check this", id: id, in: doc) }
+            ReaderAnnotations.save(from: doc, folder: folder, store: store)
+            let saved = store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("annotations.json")) ?? []
+            check(saved.count == 4, "annotations.json now has 4 (got \(saved.count))")
+            check(saved.first { $0.id == "z:I1" }?.paths == [[100, 100, 150, 150, 200, 120]],
+                  "imported ink keeps its exact paths through a save")
+            check(saved.first { $0.id == "z:H1" }?.rects == [[72, 700, 200, 714]] && saved.first { $0.id == "z:H1" }?.text == "Alpha",
+                  "imported highlight keeps its rect and stored text")
+            let n = saved.first { $0.id.hasPrefix("n:") }
+            check(n?.comment == "check this" && n?.color == "#5fb236" && n?.author == "user", "new highlight saved with comment and colour")
+            check(fm.contentsEqual(atPath: dir.appendingPathComponent("paper.pdf").path,
+                                   andPath: root.appendingPathComponent("original.pdf").path),
+                  "the PDF file itself is unchanged")
+
+            print("Reloading and deleting")
+            guard let doc2 = ReaderDocument.open(dir.appendingPathComponent("paper.pdf")) else { throw ZoteroImportError.missing("reopen") }
+            ReaderAnnotations.load(into: doc2, folder: folder, store: store)
+            check(ReaderAnnotations.rows(in: doc2).count == 4, "all 4 come back after reopening")
+            ReaderAnnotations.remove(id: "z:N1", in: doc2)
+            ReaderAnnotations.save(from: doc2, folder: folder, store: store)
+            let afterDelete = store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("annotations.json")) ?? []
+            check(afterDelete.count == 3 && !afterDelete.contains { $0.id == "z:N1" }, "a deleted note is gone from annotations.json")
+
+            print("Dark mode keeps figures in colour")
+            ReaderPage.dark = true
+            if let page = doc2.page(at: 1) {
+                let px = pixels(page)
+                // Background outside the figure: dark. Inside the figure: still light.
+                check(px.at(50, 50) < 0.25, "page background drawn dark (got \(String(format: "%.2f", px.at(50, 50))))")
+                check(px.at(400, 450) > 0.75, "figure region keeps its light background (got \(String(format: "%.2f", px.at(400, 450))))")
+            }
+            ReaderPage.dark = false
+            if let page = doc2.page(at: 1) {
+                check(pixels(page).at(50, 50) > 0.9, "light mode draws the page normally")
+            }
+
+            print("Tabs and suspension")
+            let session = ReaderSession(store: store, persists: false)
+            var urls: [URL] = []
+            for i in 0..<7 {
+                let u = root.appendingPathComponent("extra\(i).pdf")
+                try fm.copyItem(at: root.appendingPathComponent("original.pdf"), to: u)
+                urls.append(u)
+            }
+            session.open(dir.appendingPathComponent("paper.pdf"))
+            check(session.active?.folder == folder && session.active?.title == folder,
+                  "a library paper opens as its citekey, linked to its folder")
+            for u in urls { session.open(u); _ = session.document(for: session.activeID!) }
+            let live = session.tabs.filter { session.isLive($0.id) }.count
+            check(session.tabs.count == 8 && live <= ReaderSession.liveDocuments,
+                  "8 tabs open, only \(live) documents kept (limit \(ReaderSession.liveDocuments))")
+            check(!session.isLive(session.tabs[0].id), "the oldest tab is suspended")
+            session.open(urls[2])
+            check(session.tabs.count == 8 && session.active?.url == urls[2].standardizedFileURL, "opening an open PDF switches to its tab")
+            let first = session.tabs[0].id
+            session.select(first)
+            check(session.document(for: first) != nil, "a suspended tab reopens")
+            session.updatePosition(first, ReaderPosition(page: 2, x: 0, y: 500, scale: 0))
+            check(store.meta(folder: folder)?.lastPage == 2, "reading position saved to meta.json")
+            session.close(first)
+            check(!session.tabs.contains { $0.id == first }, "tab closed")
+            session.reopenClosed()
+            check(session.active?.folder == folder && session.active?.position.page == 2, "closed tab reopens at its page")
+        } catch {
+            print("  FAIL  \(error)")
+            failures += 1
+        }
+        print(failures == 0 ? "\nReader self-test passed." : "\nReader self-test FAILED (\(failures)).")
+        exit(failures == 0 ? 0 : 1)
+    }
+
+    /// A 3-page US-letter PDF with a line of text on each page. Also saved as
+    /// original.pdf next to the library, to check the paper is never written.
+    static func makePDF(_ url: URL) throws {
+        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard let ctx = CGContext(url as CFURL, mediaBox: &box, nil) else { throw ZoteroImportError.missing("PDF context") }
+        let font = CTFontCreateWithName("Helvetica" as CFString, 14, nil)
+        for i in 0..<3 {
+            ctx.beginPDFPage(nil)
+            let s = NSAttributedString(string: ["Alpha beta gamma delta", "Epsilon zeta eta", "Theta iota kappa"][i],
+                                       attributes: [.font: font])
+            let line = CTLineCreateWithAttributedString(s)
+            ctx.textPosition = CGPoint(x: 72, y: 703)
+            CTLineDraw(line, ctx)
+            ctx.endPDFPage()
+        }
+        ctx.closePDF()
+        try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("original.pdf"))
+    }
+
+    /// Grey levels of a page rendered at 1 pt per pixel; at(x, y) uses PDF
+    /// coordinates (origin bottom-left).
+    struct Pixels {
+        let data: [UInt8], w: Int, h: Int
+        func at(_ x: Int, _ y: Int) -> Double { Double(data[(h - 1 - y) * w + x]) / 255 }
+    }
+
+    static func pixels(_ page: PDFPage) -> Pixels {
+        let b = page.bounds(for: .mediaBox)
+        let w = Int(b.width), h = Int(b.height)
+        var data = [UInt8](repeating: 0, count: w * h)
+        let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: 0)!
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        page.draw(with: .mediaBox, to: ctx)
+        return Pixels(data: data, w: w, h: h)
+    }
+}
