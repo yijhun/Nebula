@@ -240,6 +240,21 @@ let EN: [String: String] = [
     "留下這個重點": "Keep this highlight", "不要": "Reject", "已送進筆記": "Sent to the note",
     "Claude 建議了 %d 個重點，請逐一確認": "Claude suggested %d highlights; accept or reject each",
     "第 %d 頁": "page %d",
+    // Reader: library tab
+    "論文庫": "Library", "沒有 PDF 的論文": "No PDF", "所有論文": "All Papers", "未讀": "Unread", "最近打開": "Recently Opened",
+    "其他檔案": "Other Files", "專案": "Projects", "標籤": "Tags", "篇論文": "papers",
+    "搜尋論文庫：作者、標題、年份、citekey、標籤": "Search the library: author, title, year, citekey, tag",
+    "重新讀取論文庫": "Reload the library", "期刊": "Publication", "加入日期": "Date Added",
+    "標記數": "Annotations", "論文庫是空的": "The library is empty", "沒有符合的論文": "No matching papers",
+    "打開網頁": "Open Web Page", "複製 citekey": "Copy Citekey", "複製引用 [@…]": "Copy Citation [@…]",
+    "檔名": "File", "所屬集合": "Collections", "可能是論文": "Possible Paper",
+    "選一篇論文看資訊；按兩下打開": "Select a paper to see its details; double-click to open it",
+    "不是論文的檔案（從 Zotero 匯入）。「可能是論文」的會在之後查 ADS 變成論文。":
+        "Files that are not papers (imported from Zotero). Possible papers will be looked up on ADS and turned into papers later.",
+    "摘要": "Abstract", "卷 / 期 / 頁": "Vol. / Issue / Pages", "日期": "Date", "別名": "Aliases",
+    "期刊關鍵字": "Journal Keywords", "狀態": "Status", "上次打開": "Last Opened", "讀到": "Read Up To",
+    "筆記": "Notes", "論文庫：所有論文、專案、標籤（⌘T 搜尋）": "Library: all papers, projects, tags (⌘T to search)",
+    "從論文庫打開論文（⌘T）": "Open a paper from the library (⌘T)",
     "導讀這篇：三行摘要、最重要的 2–3 張圖（附頁碼連結），以及它和我其他論文的關係（如果找得到）。":
         "Brief me on this paper: a three-line summary, the 2–3 most important figures (with page links), and how it relates to my other papers (if you can find them).",
     "幫我建議重點，範圍：%@。類別：Result、Numbers、Data & Method、Caveat、Relevant to me。用 reader_suggest_highlights，最多 8 個，理由用英文。":

@@ -31,8 +31,14 @@ final class ReaderSession: ObservableObject {
     @Published var activeID: UUID?
     /// Bumped when the active tab's document should be (re)attached to the view.
     @Published private(set) var generation = 0
-    /// Set by the "Open Paper" menu command; the reader window shows its picker.
+    /// Set by the "Open Paper" menu command; the reader window shows the
+    /// library tab with its search field focused.
     @Published var requestQuickOpen = false
+    /// The library tab (PAPER-LIBRARY.md §6.4) is in front instead of a paper.
+    /// It is not a ReaderTab: it is always there, first, and cannot be closed.
+    @Published var showLibrary = false
+    /// Every paper's meta, for the library tab; loaded when first shown.
+    lazy var library = LibraryIndex(store: store)
 
     /// A place to show once the tab is on screen (from a nebula://paper link).
     struct Goto: Equatable { let tab: UUID; let page: Int; let quote: String? }
@@ -100,6 +106,7 @@ final class ReaderSession: ObservableObject {
         self.store = store
         self.persists = persists
         if persists { restore() }
+        showLibrary = tabs.isEmpty
     }
 
     var active: ReaderTab? { tabs.first { $0.id == activeID } }
@@ -130,7 +137,9 @@ final class ReaderSession: ObservableObject {
     }
 
     func select(_ id: UUID) {
-        guard tabs.contains(where: { $0.id == id }) else { return }
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        showLibrary = false
+        if activeID != id, let f = tab.folder { stampOpened(f) }
         activeID = id
         touch(id)
         generation += 1
@@ -149,6 +158,7 @@ final class ReaderSession: ObservableObject {
             if let a = activeID { touch(a) }
             generation += 1
         }
+        if tabs.isEmpty { showLibrary = true }
         persist()
     }
 
@@ -158,9 +168,13 @@ final class ReaderSession: ObservableObject {
         select(t.id)
     }
 
+    /// ⌃Tab order: the library tab, then the paper tabs, round again.
     func selectNext(_ step: Int = 1) {
-        guard let a = activeID, let i = tabs.firstIndex(where: { $0.id == a }), !tabs.isEmpty else { return }
-        select(tabs[(i + step + tabs.count) % tabs.count].id)
+        guard !tabs.isEmpty else { showLibrary = true; return }
+        let n = tabs.count + 1
+        let at = showLibrary ? 0 : (activeID.flatMap { a in tabs.firstIndex { $0.id == a } }.map { $0 + 1 } ?? 0)
+        let next = ((at + step) % n + n) % n
+        if next == 0 { showLibrary = true } else { select(tabs[next - 1].id) }
     }
 
     // MARK: documents
@@ -202,6 +216,13 @@ final class ReaderSession: ObservableObject {
             try? store.write(m, to: store.folder(f).appendingPathComponent("meta.json"))
         }
         persist()
+    }
+
+    /// When a library paper was last opened (for the library's Recently Opened).
+    private func stampOpened(_ folder: String) {
+        guard var m = store.meta(folder: folder) else { return }
+        m.lastOpened = ISO8601DateFormatter().string(from: Date())
+        try? store.write(m, to: store.folder(folder).appendingPathComponent("meta.json"))
     }
 
     /// Library papers keep annotations in annotations.json; other PDFs keep

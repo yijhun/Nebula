@@ -291,6 +291,37 @@ See §9.
   ⌘⇧T reopen closed, ⌃Tab next tab.
 - On relaunch every tab is restored suspended and loads only when selected.
 
+#### Library tab
+
+The first tab is the library, like Zotero's. It is always there and never
+closes; it is not a paper tab, so it costs nothing in the tab LRU.
+
+- **Left:** All Papers, Unread, Recently Opened, No PDF, Other Files
+  (`_files/`), then Projects as a tree (a path like `a/b` nests under `a`,
+  and `a` shows its sub-projects' papers), then Tags with counts.
+- **Middle:** a sortable table (title, creator, year, publication, date
+  added, annotation count) with a search field. Search needs every word,
+  matched against citekey, title, creators, year, publication, tags,
+  keywords, projects and identifiers. Papers without a PDF are dimmed.
+- **Right:** the selected paper's details: type, title, creators,
+  publication, volume/issue/pages, date, citekey (copy), DOI / arXiv / ADS
+  links, projects and tags (click to filter), journal keywords, date added,
+  last opened, page read up to, annotation count, notes, abstract.
+- Double-click or Return opens a paper in a tab. A paper without a PDF opens
+  its web page instead; nothing is downloaded. ⌘T, the `+` button and the
+  Open Paper menu command show the library with the cursor in its search
+  field. ⌃Tab cycles through the library tab too; ⌘W does nothing on it.
+- The paper under the library stays attached (hidden), so going back is
+  instant and keeps its place; its position and annotations are saved on
+  leaving.
+- Every `meta.json` is read once, off the main thread, when the library tab
+  is first shown, and again on the reload button. No polling (§10).
+- Display only: Zotero's title markup (`<i>…</i>`) is dropped, AASTeX journal
+  macros (`\apj`) read as names, and Zotero's `"1952-04-01 1952-04-01"` dates
+  show as entered.
+- Read-only for now: editing tags, projects or status, adding papers and
+  merging duplicates come with the rest of phase 1 (§4.4–4.6).
+
 ## 7. Figures
 
 ### 7.1 Extraction

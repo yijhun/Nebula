@@ -175,6 +175,76 @@ enum ReaderSelfTest {
             let acc = withAccepted.first { $0.id == accepted }
             check(acc?.author == "claude" && acc?.text == "beta gamma" && acc?.comment == "[Result] Key claim.",
                   "an accepted suggestion is saved with Claude's quote and reason")
+
+            print("Library tab")
+            func meta(_ key: String, title: String, year: String, creators: [String], pdf: Bool,
+                      projects: [String] = [], tags: [String] = [], status: String? = nil) -> PaperMeta {
+                var m = PaperMeta(citekey: key, ids: PlanIDs(doi: "10.1/\(key)"), title: title, year: year,
+                                  bibliographic: Bibliographic(itemType: "journalArticle",
+                                                               fields: ["publicationTitle": "Test Journal"],
+                                                               creators: creators.map { PersonName(family: $0, given: "A.") }),
+                                  pdf: pdf ? "paper.pdf" : nil, added: "2024-01-0\(creators.count) 00:00:00")
+                m.projects = projects; m.tags = tags; m.status = status
+                return m
+            }
+            for (k, m) in [
+                ("alphaOne2021", meta("alphaOne2021", title: "Infall onto a hub", year: "2021", creators: ["Alpha"], pdf: true,
+                                      projects: ["bigSurvey/partA"], tags: ["infall"], status: "unread")),
+                ("betaTwo2022", meta("betaTwo2022", title: "Magnetic fields in cores", year: "2022", creators: ["Beta", "Gamma"],
+                                     pdf: false, projects: ["bigSurvey/partB", "other"], tags: ["magnetic", "infall"])),
+            ] {
+                try store.write(m, to: store.folder(k).appendingPathComponent("meta.json"))
+            }
+            try fm.createDirectory(at: store.folder("alphaOne2021").appendingPathComponent("notes"), withIntermediateDirectories: true)
+            try "note".write(to: store.folder("alphaOne2021").appendingPathComponent("notes/n1.md"), atomically: true, encoding: .utf8)
+            try store.write([FileEntry(name: "misc/slides.pdf", collections: ["misc"], zoteroKey: "F1")],
+                            to: store.filesDir.appendingPathComponent("files.json"))
+            let (entries, files) = LibraryIndex.load(store)
+            check(entries.count == 3 && files.count == 1, "library loads every paper and the other files (\(entries.count), \(files.count))")
+            let a = entries.first { $0.folder == "alphaOne2021" }, b = entries.first { $0.folder == "betaTwo2022" }
+            let annCount = (store.read([LibraryAnnotation].self, from: dir.appendingPathComponent("annotations.json")) ?? []).count
+            check(a?.notes == ["n1.md"] && annCount > 0 && entries.first { $0.folder == folder }?.annotationCount == annCount,
+                  "notes and annotation counts are read (\(entries.first { $0.folder == folder }?.annotationCount ?? -1) of \(annCount))")
+            check(a?.creators == "Alpha" && b?.creators == "Beta and Gamma" &&
+                  LibraryEntry.creatorLabel(["X", "Y", "Z"].map { PersonName(family: $0, given: "") }) == "X et al.",
+                  "creators read like Zotero's (one, two, et al.)")
+            let tree = LibraryIndex.projectTree(entries.flatMap(\.meta.projects))
+            check(tree.map(\.path) == ["bigSurvey", "other"] && tree.first?.children?.map(\.path) == ["bigSurvey/partA", "bigSurvey/partB"],
+                  "projects form a tree; a parent that is only a prefix is created")
+            func shown(_ s: LibrarySource) -> [String] { entries.filter { LibraryIndex.matches($0, s) }.map(\.folder).sorted() }
+            check(shown(.project("bigSurvey")) == ["alphaOne2021", "betaTwo2022"] && shown(.project("bigSurvey/partB")) == ["betaTwo2022"],
+                  "a project shows its sub-projects' papers")
+            check(shown(.tag("infall")) == ["alphaOne2021", "betaTwo2022"] && shown(.unread) == ["alphaOne2021"]
+                  && shown(.noPDF) == ["betaTwo2022"], "tags, unread and no-PDF filter")
+            check(LibraryIndex.search(entries, "magnetic 2022").map(\.folder) == ["betaTwo2022"]
+                  && LibraryIndex.search(entries, "gamma beta").map(\.folder) == ["betaTwo2022"]
+                  && LibraryIndex.search(entries, "10.1/alphaone").map(\.folder) == ["alphaOne2021"],
+                  "search needs every word: title, year, authors, DOI")
+            check(webURL(b!.meta)?.absoluteString == "https://doi.org/10.1/betaTwo2022", "a paper without a PDF links to its DOI page")
+            check(LibraryInfoPane.typeLabel("journalArticle") == "Journal Article", "item types read as words")
+            check(LibraryEntry.plain("Multi-line <i>Herschel</i>/HIFI and H<sub>2</sub>O") == "Multi-line Herschel/HIFI and H2O",
+                  "titles drop Zotero's markup")
+            check(LibraryEntry.journal("\\apj") == "ApJ" && LibraryEntry.journal("åp") == "A&A" && LibraryEntry.journal("Nature") == "Nature"
+                  && LibraryEntry.displayDate("1952-04-01 1952-04-01") == "1952-04-01" && LibraryEntry.displayDate("2019-00-00 2019") == "2019",
+                  "journal macros and Zotero dates read as people write them")
+
+            let s2 = ReaderSession(store: store, persists: false)
+            check(s2.showLibrary, "with no tabs the library tab is in front")
+            s2.openFolder(folder)
+            check(!s2.showLibrary && s2.active?.folder == folder, "opening a paper leaves the library tab")
+            s2.open(urls[0])
+            s2.showLibrary = true
+            s2.selectNext(1)
+            check(!s2.showLibrary && s2.activeID == s2.tabs[0].id, "⌃Tab from the library goes to the first paper tab")
+            s2.selectNext(-1)
+            check(s2.showLibrary, "⌃⇧Tab from the first paper tab goes back to the library")
+            s2.selectNext(-1)
+            check(!s2.showLibrary && s2.activeID == s2.tabs.last?.id, "and on round to the last tab")
+            s2.showLibrary = true
+            s2.openLink(URL(string: "nebula://paper/\(folder)?page=1")!)
+            check(!s2.showLibrary && s2.active?.folder == folder, "a paper link opens over the library tab")
+            for t in s2.tabs { s2.close(t.id) }
+            check(s2.showLibrary && s2.tabs.isEmpty, "closing the last tab shows the library")
         } catch {
             print("  FAIL  \(error)")
             failures += 1
