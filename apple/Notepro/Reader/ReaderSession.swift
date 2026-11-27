@@ -138,8 +138,10 @@ final class ReaderSession: ObservableObject {
 
     func select(_ id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        // Coming back from the library to the same paper counts as opening it.
+        let fromLibrary = showLibrary
         showLibrary = false
-        if activeID != id, let f = tab.folder { stampOpened(f) }
+        if activeID != id || fromLibrary, let f = tab.folder { stampOpened(f) }
         activeID = id
         touch(id)
         generation += 1

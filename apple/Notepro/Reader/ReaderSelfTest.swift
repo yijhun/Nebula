@@ -232,6 +232,14 @@ enum ReaderSelfTest {
             check(s2.showLibrary, "with no tabs the library tab is in front")
             s2.openFolder(folder)
             check(!s2.showLibrary && s2.active?.folder == folder, "opening a paper leaves the library tab")
+            if var m = store.meta(folder: folder) {
+                m.lastOpened = "2000-01-01T00:00:00Z"
+                try store.write(m, to: dir.appendingPathComponent("meta.json"))
+            }
+            s2.showLibrary = true
+            s2.openFolder(folder)
+            check(store.meta(folder: folder)?.lastOpened != "2000-01-01T00:00:00Z",
+                  "going back from the library to the same paper updates its last-opened time")
             s2.open(urls[0])
             s2.showLibrary = true
             s2.selectNext(1)
