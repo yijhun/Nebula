@@ -196,7 +196,7 @@ final class PDFController: ObservableObject {
 /// PDFView with a rubber-band figure-capture mode: while active, a drag draws
 /// a selection rectangle instead of selecting text; releasing hands the rect
 /// to `onCapture`. Escape (or the toolbar toggle) leaves the mode.
-final class CapturePDFView: PDFView {
+class CapturePDFView: PDFView {
     var captureActive: () -> Bool = { false }
     var onCapture: ((CGRect) -> Void)?
 

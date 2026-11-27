@@ -91,8 +91,12 @@ struct FileEntry: Codable, Equatable {
 struct PaperLibraryStore {
     let root: URL
 
+    /// `~/Nebula Library`, or `$NEBULA_LIBRARY` (for testing against a copy).
     static var defaultRoot: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Nebula Library", isDirectory: true)
+        if let p = ProcessInfo.processInfo.environment["NEBULA_LIBRARY"], !p.isEmpty {
+            return URL(fileURLWithPath: (p as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Nebula Library", isDirectory: true)
     }
 
     var filesDir: URL { root.appendingPathComponent("_files", isDirectory: true) }

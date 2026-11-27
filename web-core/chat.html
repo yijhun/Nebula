@@ -102,6 +102,14 @@
     #chips { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
     .chip { font-size: 11px; padding: 2px 9px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel); color: var(--dim); }
     .chip.on { border-color: var(--accent); color: var(--accent); }
+    /* Links to a place in a paper (nebula://paper/…): a small chip; red when the
+       quoted text was not found on that page. */
+    .msg.asst a[href^="nebula:"] { display: inline-block; font-size: 11px; padding: 0 7px; margin: 0 1px;
+      border-radius: 9px; border: 1px solid var(--accent); color: var(--accent); text-decoration: none; }
+    .msg.asst a[href^="nebula:"].unverified { border-color: #d33; color: #d33; }
+    .msg.asst a[href^="nebula:"].unverified::after { content: " ?"; }
+    .tonote { float: right; font-size: 11px; border: 0; background: none; color: var(--dim); cursor: pointer; }
+    .tonote:hover { color: var(--accent); }
     #box { display: flex; gap: 6px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 6px; }
     #box:focus-within { border-color: var(--accent); }
     #input { flex: 1; resize: none; border: 0; outline: 0; background: none; color: var(--text); font: inherit;

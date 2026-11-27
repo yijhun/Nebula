@@ -173,11 +173,15 @@ struct RootView: View {
                 tabs.active.statusText = "已自動彙整本週待辦 → \(url.lastPathComponent)"
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .nebulaShowReader)) { _ in
+            openWindow(id: "reader")
+        }
         .onChange(of: selection) { _, newValue in
             // Open only on a single selection; multi-select is for batch ops.
             if newValue.count == 1, let url = newValue.first {
                 if url.pathExtension.lowercased() == "pdf" {
-                    openWindow(id: "pdf", value: url)   // papers open in a reader window
+                    ReaderSession.shared.open(url)      // papers open as a reader tab
+                    openWindow(id: "reader")
                 } else if NSEvent.modifierFlags.contains(.option) {
                     tabs.openToSide(url)                // ⌥-click: the other pane
                 } else {

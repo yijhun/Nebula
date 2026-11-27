@@ -53,6 +53,8 @@ enum NebulaMain {
         if CommandLine.arguments.contains("--mcp") { NebulaMCP.run() }
         if CommandLine.arguments.contains("--save-selftest") { SaveSelfTest.run() }
         if CommandLine.arguments.contains("--library-selftest") { LibrarySelfTest.run() }
+        if CommandLine.arguments.contains("--reader-selftest") { ReaderSelfTest.run() }
+        if CommandLine.arguments.contains("--reader-snapshot") { MainActor.assumeIsolated { ReaderSnapshot.run() } }
         if CommandLine.arguments.contains("--zotero-import-report") { ZoteroImportReport.runCLI() }
         if CommandLine.arguments.contains("--library-import") { LibraryImporter.runCLI() }
         if CommandLine.arguments.contains("--library-ads") { LibraryADS.runCLI() }
@@ -68,6 +70,7 @@ struct NoteproApp: App {
     @StateObject private var projects = ProjectsModel()
     @FocusedValue(\.editorModel) private var focusedEditor
     @FocusedValue(\.tabsModel) private var focusedTabs
+    @Environment(\.openWindow) private var openWindow
 
     /// Open a file the menus just created in the window you're using, via its
     /// tabs (so it lands in the focused pane and is never open twice).
@@ -96,6 +99,12 @@ struct NoteproApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(vault.rootURL == nil)
+
+                Button(LZ("打開論文… Open Paper")) {
+                    ReaderSession.shared.requestQuickOpen = true
+                    openWindow(id: "reader")
+                }
+                .keyboardShortcut("p", modifiers: [.command, .option])
 
                 Button(LZ("新資料夾 New Folder")) { vault.createFolder(in: vault.rootURL) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -298,7 +307,13 @@ struct NoteproApp: App {
             }
         }
 
-        // Paper-reading windows (read + highlight a PDF → literature note).
+        // The paper reader: one window with its own tab bar (PAPER-LIBRARY.md §6).
+        Window(LZ("論文 Papers"), id: "reader") {
+            ReaderWindowView()
+                .environmentObject(vault)
+        }
+
+        // Live compiled-preview pop-out (read + highlight a PDF → literature note).
         WindowGroup("論文 Paper", id: "pdf", for: URL.self) { $url in
             if let url {
                 PDFReaderView(url: url)

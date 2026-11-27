@@ -22,9 +22,10 @@ codesign --force --deep -s - "$APP"
 
 # Losing or crossing files is the worst thing this app can do. A build that
 # fails this never replaces the working Nebula.app. (Temp files only.)
-echo "==> [5/5] Save and library self-tests, then copying to repo root…"
+echo "==> [5/5] Save, library and reader self-tests, then copying to repo root…"
 "$APP/Contents/MacOS/Nebula" --save-selftest
 "$APP/Contents/MacOS/Nebula" --library-selftest
+"$APP/Contents/MacOS/Nebula" --reader-selftest
 rm -rf "$ROOT/Nebula.app"
 cp -R "$APP" "$ROOT/Nebula.app"
 codesign --force --deep -s - "$ROOT/Nebula.app"

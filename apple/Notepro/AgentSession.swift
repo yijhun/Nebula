@@ -22,6 +22,10 @@ final class AgentSession {
     /// Folders outside `cwd` the CLI may read — attachments from Zotero's
     /// storage, Downloads, and so on.
     let extraDirs: [String]
+    /// Reader conversations: the paper's library folder (gives the reader
+    /// tools) and the instructions that go with it.
+    var paper: URL?
+    var extraNote: String?
 
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
@@ -97,7 +101,7 @@ final class AgentSession {
         if let m = model, !m.isEmpty { a += ["--model", m] }
         for d in extraDirs { a += ["--add-dir", d] }
         if let r = resumeID { a += ["--resume", r] }
-        a += NebulaMCP.claudeArgs()          // Zotero / ADS tools
+        a += NebulaMCP.claudeArgs(paper: paper)   // Zotero / ADS (+ reader) tools
         return a
     }
 
@@ -110,7 +114,7 @@ final class AgentSession {
               "-C", cwd.path]
         if let m = model, !m.isEmpty { a += ["-m", m] }
         for d in extraDirs { a += ["--add-dir", d] }
-        a += NebulaMCP.codexArgs()           // Zotero / ADS tools
+        a += NebulaMCP.codexArgs(paper: paper)    // Zotero / ADS (+ reader) tools
         a += ["\(systemNote)\n\n\(prompt)"]
         return a
     }
@@ -121,7 +125,10 @@ final class AgentSession {
     /// Base instructions + the Zotero/ADS tool rules + the user's own style
     /// guide (learned from this vault), each when enabled in Settings.
     private var systemNote: String {
-        [Self.baseNote, NebulaMCP.instruction, WritingStyle.instruction(vault: cwd)]
+        if let extraNote {
+            return [extraNote, NebulaMCP.instruction].compactMap { $0 }.joined(separator: "\n\n")
+        }
+        return [Self.baseNote, NebulaMCP.instruction, WritingStyle.instruction(vault: cwd)]
             .compactMap { $0 }.joined(separator: "\n\n")
     }
 

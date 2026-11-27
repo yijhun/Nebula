@@ -71,7 +71,8 @@ struct EditorPane: View {
         panel.allowedContentTypes = [.pdf]
         panel.prompt = "讀 PDF"
         if panel.runModal() == .OK, let url = panel.url {
-            openWindow(id: "pdf", value: url)
+            ReaderSession.shared.open(url)
+            openWindow(id: "reader")
         }
     }
 

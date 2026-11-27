@@ -373,31 +373,34 @@ subscription.
 
 ### 8.1 Architecture
 
-`Nebula --mcp` is a separate process started by the CLI. It cannot see the
-running app's reader windows. Add a local channel:
+As built (`apple/Notepro/Reader/`), without a socket:
 
-- The app runs a Unix-domain socket server, local only. It answers queries
-  and runs commands against the reader.
-- **Tools are bound to the conversation's paper, not to the focused tab.**
-  Each reader chat session is started with its citekey, and its MCP server
-  passes that citekey on every call. Claude answering in a background tab, or
-  in a second reader window, still reads its own paper. If that tab is
-  suspended, page text and figures are served from the files, and the
-  selection is whatever was saved when the tab was suspended.
-- The MCP process forwards reader tool calls over the socket.
-- The same command path serves `nebula://` links (§8.6).
-- The channel is event-driven. Nothing polls (§10).
+- **Tools are bound to the conversation's paper.** The reader's chat starts
+  the CLI with `Nebula --mcp --paper <library folder>`, so every reader tool
+  reads that paper's own files (`paper.pdf`, `figures.json`) directly. No
+  running app is needed, and a background tab's conversation still reads
+  its own paper.
+- **What the user is looking at travels with each message.** The reader adds
+  the current page and, when asked, the selected text to the prompt, which
+  replaces a `reader_context` tool.
+- **Actions come back through files and links**, not commands:
+  - suggested highlights are written to the paper's `suggestions.json`, and
+    the reader loads them when the turn ends;
+  - places are `nebula://paper/<citekey>?page=N&quote=…` links, which the
+    reader opens and checks.
+- The reader chat is read-only (it cannot edit files in the library folder).
+  It runs in the paper's folder and keeps its transcript in `chat/chats.json`.
+  A CLI starts only when a message is sent.
 
 ### 8.2 Tools
 
 | Tool | Purpose |
 |---|---|
-| `reader_context` | Open paper (citekey), page, selection text and position, focused figure |
-| `reader_page_text` | Text of a page range, each paragraph tagged with its page |
-| `reader_figure` | One figure's image and caption |
-| `reader_capture` | Image of an arbitrary page region, for figures pdffigures2 missed |
-| `reader_goto` | Jump to a page, figure or quoted passage |
-| `reader_suggest_highlights` | Propose highlights; they show as pending until the user accepts |
+| `reader_paper` | Citekey, title, authors, year, page count, known figures |
+| `reader_page_text` | Text of pages `from`…`to` (at most 6), each headed with its page |
+| `reader_figure` | One known figure's image and caption, by label |
+| `reader_page_image` | A whole page as an image, for figures not detected |
+| `reader_suggest_highlights` | Propose up to 8 highlights; they show as pending until the user accepts |
 
 - Claude reads page ranges, not whole papers, to save quota and keep answers
   grounded.

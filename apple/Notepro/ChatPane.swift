@@ -29,6 +29,71 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
     private var saved: [String: [String: Any]] = [:]
     private var saveWork: DispatchWorkItem?
 
+    // MARK: reader scope
+
+    /// Set for the reader's chat: the paper this conversation is about. Its
+    /// transcript lives in the paper's folder (chat/chats.json), the CLI runs
+    /// there, and it gets the reader tools for that paper.
+    struct Paper: Equatable { let folder: URL; let citekey: String; let title: String }
+    private(set) var paper: Paper?
+    /// The reader supplies where the user is: page (1-based) and selected text.
+    var readerState: () -> (page: Int, selection: String) = { (0, "") }
+    /// What a nebula://paper link does; defaults to opening it in the reader.
+    var onPaperLink: ((URL) -> Void)?
+    /// "→ note" on a reply in the reader's chat.
+    var onToNote: ((String) -> Void)?
+
+    /// Switch the conversation to another paper. The old one's transcript is
+    /// saved; nothing is started until the user sends a message.
+    func setPaper(_ p: Paper?) {
+        guard p != paper else { return }
+        if paper != nil { saveWork?.cancel(); writeSaved() }
+        session?.onExit = nil; session?.onLine = nil; session?.stop(); session = nil
+        restoredSessionID = nil
+        attachments = []
+        paper = p
+        saved = [:]
+        // A paper conversation reads; it never edits files in the library folder.
+        if p != nil { mode = .readOnly }
+        guard ready else { return }
+        loadSaved()
+        emit(["type": "nebula", "event": "cleared"])
+        pushState()
+        restoreTranscript()
+    }
+
+    private var paperNote: String? {
+        guard let p = paper else { return nil }
+        return """
+        You are inside Nebula's paper reader, discussing one paper: [@\(p.citekey)] "\(p.title)". The working directory is its library folder (paper.pdf, meta.json, annotations.json, figures.json).
+        - Use the nebula reader tools: reader_paper, reader_page_text (read only the pages you need), reader_figure / reader_page_image to look at figures, reader_suggest_highlights only when the user asks for highlights.
+        - Whenever you state something from the paper, link to where it is: [p.N](nebula://paper/\(p.citekey)?page=N&quote=WORDS) with WORDS = 4–12 consecutive words copied exactly from that page, URL-encoded. The reader checks the quote and marks the link if it is not on that page, so quote exactly.
+        - Each user message says which page the user is on and may include the text they selected.
+        - Reply in the user's language. Write math as $…$ / $$…$$.
+        """
+    }
+
+    private func openLink(_ href: String) {
+        guard let url = URL(string: href) else { return }
+        if url.scheme == "nebula" {
+            if let h = onPaperLink { h(url) } else {
+                ReaderSession.shared.openLink(url)
+                NotificationCenter.default.post(name: .nebulaShowReader, object: nil)
+            }
+        } else if ["http", "https", "mailto"].contains(url.scheme ?? "") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Check nebula://paper links: is the quote on that page?
+    private func verifyLinks(_ hrefs: [String]) {
+        var out: [String: Bool] = [:]
+        for h in hrefs { out[h] = ReaderSession.shared.verify(link: h) }
+        guard let data = try? JSONSerialization.data(withJSONObject: out),
+              let s = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.nebulaChat && window.nebulaChat.linkStatus(\(Self.js(s)))")
+    }
+
     // MARK: JS → Swift
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -106,6 +171,16 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             pickFiles(dirs: body["dirs"] as? Bool ?? false)
         case "openFile":
             if let path = body["path"] as? String { openInEditor(path) }
+        case "openLink":
+            if let h = body["href"] as? String { openLink(h) }
+        case "verifyLinks":
+            verifyLinks(body["hrefs"] as? [String] ?? [])
+        case "toNote":
+            if let t = body["text"] as? String, !t.isEmpty {
+                if let h = onToNote { h(t) } else {
+                    NotificationCenter.default.post(name: .noteproInsertIntoNote, object: nil, userInfo: ["text": "\n\(t)\n"])
+                }
+            }
         case "revertEdit":
             revertEdit(path: body["path"] as? String ?? "",
                        oldString: body["oldString"] as? String ?? "",
@@ -134,11 +209,13 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
         old?.stop()
         session = nil
         guard let acct = accounts.active else { return false }
-        let cwd = context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
+        let cwd = paper?.folder ?? context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
         grantedDirs = extraDirs(for: cwd)
         let s = AgentSession(account: acct, cwd: cwd, mode: mode,
                              model: model.isEmpty ? nil : model, resumeID: resumeID,
                              extraDirs: grantedDirs)
+        s.paper = paper?.folder
+        s.extraNote = paperNote
         s.onLine = { [weak self] line in self?.forward(line) }
         s.onExit = { [weak self] code, err in
             guard let self, self.session === s else { return }
@@ -153,6 +230,22 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
     }
 
     private func send(text: String, attachNote: Bool, attachSelection: Bool) {
+        if let p = paper {
+            let st = readerState()
+            var extras: [String] = []
+            if attachNote, st.page > 0 { extras.append("(Reading [@\(p.citekey)], page \(st.page).)") }
+            if attachSelection || !st.selection.isEmpty, !st.selection.isEmpty {
+                extras.append("Selected in the paper (page \(st.page)):\n```\n\(st.selection)\n```")
+            }
+            if !attachments.isEmpty { extras.append("Attached:\n" + attachments.map { "- \($0.path)" }.joined(separator: "\n")) }
+            let prompt = extras.isEmpty ? text : text + "\n\n" + extras.joined(separator: "\n\n")
+            if needsRestartForAttachments() { restart(resume: true) }
+            guard ensureSession() else { return }
+            session?.send(prompt)
+            attachments = []
+            pushState()
+            return
+        }
         let ctx = context()
         var prompt = text
         var extras: [String] = []
@@ -221,7 +314,19 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
 
     // MARK: Swift → JS
 
+    /// Called when the agent finishes a turn (the reader then picks up any
+    /// suggested highlights).
+    var onTurnEnd: (() -> Void)?
+
+    /// Put text in the composer and send it, as if the user typed it.
+    func submit(_ text: String) {
+        webView?.evaluateJavaScript("window.nebulaChat && window.nebulaChat.submit(\(Self.js(text)))")
+    }
+
     private func forward(_ line: String) {
+        if line.contains("\"type\":\"result\"") || line.contains("\"type\":\"turn.completed\"") {
+            DispatchQueue.main.async { [weak self] in self?.onTurnEnd?() }
+        }
         webView?.evaluateJavaScript("window.nebulaChat && window.nebulaChat.onEvent(\(Self.js(line)))")
     }
 
@@ -248,6 +353,8 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
             "models": Self.models(for: accounts.active?.provider ?? .claude),
             "codexInstalled": AIAccountStore.codexPath != nil,
             "vault": context().vault?.lastPathComponent ?? "",
+            "scope": paper == nil ? "notes" : "paper",
+            "paper": ["citekey": paper?.citekey ?? "", "title": paper?.title ?? ""],
             "lang": currentlyEnglish() ? "en" : "zh",
             "attachments": attachments.map {
                 ["path": $0.path, "name": $0.lastPathComponent, "isDir": Self.isDirectory($0)]
@@ -277,7 +384,7 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
     }
 
     private func needsRestartForAttachments() -> Bool {
-        let cwd = context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
+        let cwd = paper?.folder ?? context().vault ?? URL(fileURLWithPath: NSHomeDirectory())
         return extraDirs(for: cwd) != grantedDirs
     }
 
@@ -308,6 +415,11 @@ final class ChatController: NSObject, ObservableObject, WKScriptMessageHandler {
     // MARK: transcript persistence
 
     private var savedFile: URL {
+        if let p = paper {
+            let dir = p.folder.appendingPathComponent("chat", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir.appendingPathComponent("chats.json")
+        }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Nebula", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
