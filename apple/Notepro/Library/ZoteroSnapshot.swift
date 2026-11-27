@@ -80,22 +80,42 @@ struct ZAttachment {
     let linkMode: Int64        // 0 imported file, 1 imported URL, 2 linked file, 3 linked URL
     let contentType: String
     let path: String?          // "storage:name.pdf" or an absolute path
+    /// In the trash, itself or through its parent item.
     let deleted: Bool
+    /// In the trash itself (not only through its parent).
+    let selfDeleted: Bool
     /// Standalone attachments can sit in collections themselves.
     let collectionIDs: [Int64]
 }
 
 struct ZAnnotation {
+    let key: String
     let attachmentID: Int64
     let type: Int64            // 1 highlight, 2 note, 3 image, 4 ink (confirmed in the spike)
     let author: String
     let tags: [String]
+    let text: String
+    let comment: String
+    let color: String
+    let pageLabel: String
+    /// JSON: {"pageIndex":n,"rects":[[x1,y1,x2,y2],…]} or {"pageIndex":n,"paths":[[x,y,…]],"width":w}.
+    /// PDF points, bottom-left origin (verified against Zotero's renders).
+    let position: String
+    let dateAdded: String
+}
+
+struct ZCreator {
+    let family: String
+    let given: String
+    let role: String           // author, editor, …
 }
 
 struct ZNote {
     let itemID: Int64
+    let key: String
     let parentID: Int64?
     let title: String
+    let html: String
     let deleted: Bool
 }
 
@@ -110,6 +130,8 @@ struct ZItem {
     let type: String
     let fields: [String: String]
     let creators: [String]     // last names (or single-field names), in order
+    let people: [ZCreator]
+    let dateAdded: String
     let tags: [ZTag]
     let collectionIDs: [Int64]
     let deleted: Bool
@@ -194,14 +216,23 @@ enum ZoteroSnapshot {
             fields[id, default: [:]][f] = v
         }
 
-        var creators: [Int64: [String]] = [:]
+        var creators: [Int64: [String]] = [:], people: [Int64: [ZCreator]] = [:]
+        let roles = Dictionary(uniqueKeysWithValues: (try? db.rows("SELECT creatorTypeID, creatorType FROM creatorTypes"))?
+            .compactMap { r -> (Int64, String)? in
+                guard let id = r["creatorTypeID"] as? Int64, let n = r["creatorType"] as? String else { return nil }
+                return (id, n)
+            } ?? [])
+        let hasRoles = !roles.isEmpty
         for r in try db.rows("""
-            SELECT ic.itemID, c.lastName, c.firstName FROM itemCreators ic
+            SELECT ic.itemID, c.lastName, c.firstName\(hasRoles ? ", ic.creatorTypeID" : "") FROM itemCreators ic
             JOIN creators c USING(creatorID) ORDER BY ic.itemID, ic.orderIndex
             """) {
             guard let id = r["itemID"] as? Int64 else { continue }
-            let last = (r["lastName"] as? String) ?? ""
-            creators[id, default: []].append(last.isEmpty ? ((r["firstName"] as? String) ?? "") : last)
+            let last = (r["lastName"] as? String) ?? "", first = (r["firstName"] as? String) ?? ""
+            creators[id, default: []].append(last.isEmpty ? first : last)
+            let role = (r["creatorTypeID"] as? Int64).flatMap { roles[$0] } ?? "author"
+            people[id, default: []].append(ZCreator(family: last.isEmpty ? first : last,
+                                                    given: last.isEmpty ? "" : first, role: role))
         }
 
         var tags: [Int64: [ZTag]] = [:]
@@ -216,8 +247,10 @@ enum ZoteroSnapshot {
             colls[i, default: []].append(c)
         }
 
+        let itemCols = Set(try db.rows("SELECT name FROM pragma_table_info('items')").compactMap { $0["name"] as? String })
+        let added = itemCols.contains("dateAdded") ? ", i.dateAdded" : ""
         for r in try db.rows("""
-            SELECT i.itemID, i.key, t.typeName FROM items i JOIN itemTypes t USING(itemTypeID)
+            SELECT i.itemID, i.key, t.typeName\(added) FROM items i JOIN itemTypes t USING(itemTypeID)
             """) {
             guard let id = r["itemID"] as? Int64, let key = r["key"] as? String,
                   let type = r["typeName"] as? String else { continue }
@@ -225,7 +258,9 @@ enum ZoteroSnapshot {
             case "attachment", "note", "annotation": continue
             default:
                 lib.items.append(ZItem(itemID: id, key: key, type: type, fields: fields[id] ?? [:],
-                                       creators: creators[id] ?? [], tags: tags[id] ?? [],
+                                       creators: creators[id] ?? [], people: people[id] ?? [],
+                                       dateAdded: (r["dateAdded"] as? String) ?? "",
+                                       tags: tags[id] ?? [],
                                        collectionIDs: colls[id] ?? [], deleted: deleted.contains(id)))
             }
         }
@@ -242,22 +277,35 @@ enum ZoteroSnapshot {
                 contentType: (r["contentType"] as? String) ?? "",
                 path: r["path"] as? String,
                 deleted: deleted.contains(id) || parent.map { deleted.contains($0) } == true,
+                selfDeleted: deleted.contains(id),
                 collectionIDs: colls[id] ?? []))
         }
 
-        for r in try db.rows("SELECT itemID, parentItemID, type, authorName FROM itemAnnotations") {
+        let annCols = Set(try db.rows("SELECT name FROM pragma_table_info('itemAnnotations')").compactMap { $0["name"] as? String })
+        let extra = ["text", "comment", "color", "pageLabel", "position"].filter(annCols.contains)
+        for r in try db.rows("""
+            SELECT a.itemID, i.key, a.parentItemID, a.type, a.authorName\(extra.map { ", a.\($0)" }.joined())\(added)
+            FROM itemAnnotations a JOIN items i USING(itemID)
+            """) {
             guard let id = r["itemID"] as? Int64, let parent = r["parentItemID"] as? Int64 else { continue }
             if deleted.contains(id) { continue }
+            func s(_ k: String) -> String { (r[k] as? String) ?? "" }
             lib.annotations.append(ZAnnotation(
-                attachmentID: parent, type: (r["type"] as? Int64) ?? 0,
-                author: (r["authorName"] as? String) ?? "",
-                tags: (tags[id] ?? []).map(\.name)))
+                key: s("key"), attachmentID: parent, type: (r["type"] as? Int64) ?? 0,
+                author: s("authorName"), tags: (tags[id] ?? []).map(\.name),
+                text: s("text"), comment: s("comment"), color: s("color"),
+                pageLabel: s("pageLabel"), position: s("position"), dateAdded: s("dateAdded")))
         }
 
-        for r in try db.rows("SELECT itemID, parentItemID, title FROM itemNotes") {
+        let noteCols = Set(try db.rows("SELECT name FROM pragma_table_info('itemNotes')").compactMap { $0["name"] as? String })
+        for r in try db.rows("""
+            SELECT n.itemID, i.key, n.parentItemID, n.title\(noteCols.contains("note") ? ", n.note" : "")
+            FROM itemNotes n JOIN items i USING(itemID)
+            """) {
             guard let id = r["itemID"] as? Int64 else { continue }
             let parent = r["parentItemID"] as? Int64
-            lib.notes.append(ZNote(itemID: id, parentID: parent, title: (r["title"] as? String) ?? "",
+            lib.notes.append(ZNote(itemID: id, key: (r["key"] as? String) ?? "\(id)", parentID: parent,
+                                   title: (r["title"] as? String) ?? "", html: (r["note"] as? String) ?? "",
                                    deleted: deleted.contains(id) || parent.map { deleted.contains($0) } == true))
         }
 
