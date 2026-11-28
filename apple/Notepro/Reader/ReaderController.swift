@@ -77,9 +77,9 @@ final class ReaderController: ObservableObject {
                     self.detachCurrent()
                     self.session.library.reload()   // last opened, pages, annotation counts
                     self.window?.makeFirstResponder(nil)
-                    self.window?.title = LZ("論文庫")
+                    self.showTitle(nil)
                 } else if let t = self.session.active {
-                    self.window?.title = t.title
+                    self.showTitle(t)
                 }
             }.store(in: &bag)
         session.$pendingGoto.compactMap { $0 }.receive(on: RunLoop.main)
@@ -138,7 +138,19 @@ final class ReaderController: ObservableObject {
         if showChat { bindChat() }
         applyPendingGoto()
         status = tab.folder.map { "Library: \($0)" } ?? tab.url.lastPathComponent
-        if !session.showLibrary { pv.window?.title = tab.title }
+        if !session.showLibrary { showTitle(tab) }
+    }
+
+    /// The window's title bar: the paper's title, its citekey underneath.
+    func showTitle(_ tab: ReaderTab?) {
+        guard let window else { return }
+        guard let tab else { window.title = LZ("論文庫"); window.subtitle = ""; return }
+        if let f = tab.folder, let m = session.store.meta(folder: f), !m.title.isEmpty {
+            window.title = m.title
+            window.subtitle = m.citekey
+        } else {
+            window.title = tab.title; window.subtitle = ""
+        }
     }
 
     /// Store the outgoing tab's position and annotations.
@@ -404,7 +416,7 @@ final class ReaderController: ObservableObject {
     /// ⌘F finds, ⌘G next match. Paper keys do nothing on the library tab.
     func installKeys(window: NSWindow) {
         self.window = window
-        window.title = session.showLibrary ? LZ("論文庫") : (session.active?.title ?? window.title)
+        showTitle(session.showLibrary ? nil : session.active)
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] e in
             guard let self, let window, e.window === window else { return e }

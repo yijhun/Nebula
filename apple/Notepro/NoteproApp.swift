@@ -80,6 +80,7 @@ enum NebulaMain {
         if CommandLine.arguments.contains("--zotero-import-report") { ZoteroImportReport.runCLI() }
         if CommandLine.arguments.contains("--library-import") { LibraryImporter.runCLI() }
         if CommandLine.arguments.contains("--library-ads") { LibraryADS.runCLI() }
+        if CommandLine.arguments.contains("--library-merge") { LibraryMerge.runCLI() }
         if CommandLine.arguments.contains("--open-library") { MainActor.assumeIsolated { AppWindows.pendingRoute = .library } }
         NoteproApp.main()
     }

@@ -122,6 +122,17 @@ Plus:
 
 - A new paper is matched against the library by DOI, ADS bibcode and arXiv id
   before it is added. The same paper is never added twice.
+- **Merging duplicates** (`Nebula --library-merge [--vault <dir>]`, then
+  `--apply`). The dry run writes `.import/merge-plan.json` and
+  `merge-report.md`; groups matched by title only are listed first to check.
+  The kept folder is the one with annotations, else a PDF, else the journal
+  PDF, else the most cited. The main citekey is chosen separately: the most
+  cited in the vault, else the authorTitleYear one. Every other key becomes
+  an alias. A different PDF stays beside the kept one (`paper-arxiv.pdf`,
+  `paper-2.pdf`), and notes are copied over. Merged-away folders move whole
+  to `.merged/` and their Zotero keys go into `mergedZoteroKeys`, so a
+  re-import skips them. A duplicate with annotations on a different PDF is
+  left alone. First run 2026-11-28: 46 groups, 422 → 376 papers.
 - **Preprint → published.** ADS links arXiv preprints to their journal
   versions. Nebula offers to update the metadata to the journal version,
   keeping the citekey. The PDF stays the arXiv one unless the user downloads
