@@ -322,6 +322,28 @@ closes; it is not a paper tab, so it costs nothing in the tab LRU.
 - Read-only for now: editing tags, projects or status, adding papers and
   merging duplicates come with the rest of phase 1 (§4.4–4.6).
 
+#### Two Dock icons
+
+Notes and papers each get a Dock icon, and each opens its own window:
+
+- **Nebula** opens notes. Clicking it, or opening Nebula.app again, brings
+  the frontmost notes window forward, or opens a new one when none is open.
+  It no longer just shows whatever window was last in front.
+- **Nebula Papers** opens the library tab with the search field focused.
+  - It is a tiny separate app (`apple/Launcher`) that `build-app.sh` puts
+    next to Nebula.app. It is not a second copy of Nebula: there is one
+    process, one library and one set of tabs.
+  - If Nebula is running, the launcher sends it `nebula://library`.
+    Otherwise it starts Nebula with `--open-library`, and the empty first
+    notes window closes as the reader opens.
+  - It quits at once, and `LSUIElement` keeps it out of the running apps.
+- **`nebula://` links** work from any app:
+  - `nebula://library` and `nebula://notes`;
+  - the chat's paper links, `nebula://paper/<citekey>?page=N`.
+- **The app delegate handles `nebula://` links itself**, through
+  `kAEGetURL`, not SwiftUI. SwiftUI would otherwise open an extra window for
+  every link, or no window at all when a link starts the app.
+
 ## 7. Figures
 
 ### 7.1 Extraction

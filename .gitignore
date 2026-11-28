@@ -27,6 +27,7 @@ apple/Nebula.xcodeproj/
 apple/*.xcodeproj/
 Notepro.app/
 Nebula.app/
+Nebula Papers.app/
 *.dSYM/
 .build/
 DerivedData/

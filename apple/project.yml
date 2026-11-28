@@ -66,6 +66,11 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
+        # nebula://library and nebula://notes (AppRoutes.swift); the Nebula
+        # Papers Dock icon (apple/Launcher) uses the first.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.notepro.app.route
+            CFBundleURLSchemes: [nebula]
         # Allow HTTP to localhost (the Ollama AI server).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

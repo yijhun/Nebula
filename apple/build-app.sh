@@ -30,5 +30,22 @@ rm -rf "$ROOT/Nebula.app"
 cp -R "$APP" "$ROOT/Nebula.app"
 codesign --force --deep -s - "$ROOT/Nebula.app"
 
-echo "✅ Built: $ROOT/Nebula.app"
+# The second Dock icon: a tiny app that opens the reader's library in
+# Nebula (apple/Launcher/main.swift). Kept next to Nebula.app.
+echo "==> Building Nebula Papers (the library's Dock icon)…"
+PAPERS="$ROOT/apple/build/Nebula Papers.app"
+rm -rf "$PAPERS"
+mkdir -p "$PAPERS/Contents/MacOS" "$PAPERS/Contents/Resources"
+cp "$ROOT/apple/Launcher/Info.plist" "$PAPERS/Contents/Info.plist"
+cp "$ROOT/apple/Launcher/PapersIcon.icns" "$PAPERS/Contents/Resources/"
+swiftc -O -target "$(uname -m)-apple-macos14.0" -o "$PAPERS/Contents/MacOS/NebulaPapers" "$ROOT/apple/Launcher/main.swift"
+codesign --force -s - "$PAPERS"
+rm -rf "$ROOT/Nebula Papers.app"
+cp -R "$PAPERS" "$ROOT/Nebula Papers.app"
+# Re-register both, so nebula:// and the new icon are known at once.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" 2>/dev/null || true
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$ROOT/Nebula.app" "$ROOT/Nebula Papers.app" || true
+
+echo "✅ Built: $ROOT/Nebula.app and $ROOT/Nebula Papers.app"
 echo "   Open it with:  open \"$ROOT/Nebula.app\""
+echo "   Drag both into the Dock: Nebula opens notes, Nebula Papers the paper library."
