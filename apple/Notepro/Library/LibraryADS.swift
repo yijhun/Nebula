@@ -1,7 +1,7 @@
 import Foundation
 import PDFKit
 
-/// `Nebula --library-ads [--library <dir>] [--apply]`
+/// `Nebula --library-ads [--library <dir>] [--apply] [--download-arxiv]`
 ///
 /// Asks NASA ADS about the library (PAPER-LIBRARY.md §4.4):
 /// - which preprints now have a journal version (citekey unchanged);
@@ -11,7 +11,9 @@ import PDFKit
 ///
 /// Without `--apply` nothing in the library changes: it writes
 /// `.import/ads-report.md` and `.import/ads-plan.json`. With `--apply` it
-/// updates the metadata of papers ADS matched exactly. It never downloads.
+/// updates the metadata of papers ADS matched exactly. Only
+/// `--download-arxiv` downloads: the missing PDFs that arXiv has, one
+/// request every 3 seconds, each checked to be a PDF before it is kept.
 enum LibraryADS {
 
     /// ADS search, injectable so the self-test runs offline.
@@ -61,6 +63,11 @@ enum LibraryADS {
                 \(args.contains("--apply") ? "Applied." : "Nothing changed (dry run).")
                 Wrote \(store.importDir.path)/ads-report.md and ads-plan.json
                 """)
+            if args.contains("--download-arxiv") {
+                let r = try downloadArxiv(store: store, plan: plan, download: liveDownload(), pause: 3)
+                print("arXiv: \(r.added.count) PDFs added, \(r.skipped.count) skipped, \(r.failed.count) failed. "
+                      + "Wrote \(store.importDir.path)/arxiv-downloads.md")
+            }
             exit(0)
         } catch {
             FileHandle.standardError.write("ADS step failed: \(error)\n".data(using: .utf8)!)
@@ -154,6 +161,7 @@ enum LibraryADS {
                     if let pg = u.page { m.bibliographic.fields["pages"] = pg }
                     if let y = u.year { m.year = y; m.bibliographic.fields["date"] = y }
                     m.version = "published"
+                    if m.bibliographic.itemType == "preprint" { m.bibliographic.itemType = "journalArticle" }
                 }
                 try store.write(m, to: store.folder(u.folder).appendingPathComponent("meta.json"))
             }
@@ -178,6 +186,71 @@ enum LibraryADS {
         try markdown(plan, applied: apply).write(to: store.importDir.appendingPathComponent("ads-report.md"),
                                                  atomically: true, encoding: .utf8)
         return plan
+    }
+
+    // MARK: - arXiv PDFs
+
+    /// Download, injectable so the self-test runs offline.
+    typealias Download = (URL) throws -> Data
+
+    struct DownloadResult {
+        var added: [String] = []
+        var skipped: [String] = []               // gained a PDF since the plan was made
+        var failed: [(folder: String, why: String)] = []
+    }
+
+    /// Saves each missing PDF the plan found on arXiv as `<folder>/paper.pdf`
+    /// and records it in meta.json. Never replaces a PDF that is there.
+    static func downloadArxiv(store: PaperLibraryStore, plan: Plan, download: Download,
+                              pause: TimeInterval) throws -> DownloadResult {
+        var r = DownloadResult()
+        var first = true
+        for (folder, link) in plan.arxivPDFs.sorted(by: { $0.key < $1.key }) {
+            let dir = store.folder(folder)
+            let dest = dir.appendingPathComponent("paper.pdf")
+            guard var m = store.meta(folder: folder), m.pdf == nil,
+                  !FileManager.default.fileExists(atPath: dest.path) else { r.skipped.append(folder); continue }
+            guard let url = URL(string: link) else { r.failed.append((folder, "bad link \(link)")); continue }
+            if !first, pause > 0 { Thread.sleep(forTimeInterval: pause) }   // arXiv asks for ≤ 1 request / 3 s
+            first = false
+            do {
+                let data = try download(url)
+                guard data.starts(with: Data("%PDF".utf8)), let doc = PDFDocument(data: data), doc.pageCount > 0 else {
+                    r.failed.append((folder, "not a PDF (\(data.count) bytes)")); continue
+                }
+                try data.write(to: dest, options: .atomic)
+                m.pdf = "paper.pdf"
+                try store.write(m, to: dir.appendingPathComponent("meta.json"))
+                r.added.append(folder)
+            } catch {
+                r.failed.append((folder, "\(error)"))
+            }
+        }
+        var md = "# arXiv PDFs\n\nAdded \(r.added.count), skipped \(r.skipped.count), failed \(r.failed.count).\n"
+        md += "\n## Added\n\n" + r.added.map { "- `\($0)` — \(plan.arxivPDFs[$0] ?? "")\n" }.joined()
+        md += "\n## Skipped (already has a PDF)\n\n" + r.skipped.map { "- `\($0)`\n" }.joined()
+        md += "\n## Failed\n\n" + r.failed.map { "- `\($0.folder)`: \($0.why)\n" }.joined()
+        try md.write(to: store.importDir.appendingPathComponent("arxiv-downloads.md"), atomically: true, encoding: .utf8)
+        return r
+    }
+
+    static func liveDownload() -> Download {
+        return { url in
+            var req = URLRequest(url: url)
+            req.setValue("Nebula paper library", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 120
+            var out: Result<Data, Error> = .success(Data())
+            let done = DispatchSemaphore(value: 0)
+            URLSession.shared.dataTask(with: req) { data, resp, err in
+                defer { done.signal() }
+                if let err { out = .failure(err); return }
+                let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200, let data else { out = .failure(ZoteroImportError.database("arXiv answered HTTP \(status)")); return }
+                out = .success(data)
+            }.resume()
+            done.wait()
+            return try out.get()
+        }
     }
 
     // MARK: - Helpers
