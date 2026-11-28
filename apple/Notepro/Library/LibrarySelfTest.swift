@@ -190,6 +190,45 @@ enum LibrarySelfTest {
                   && !FileManager.default.fileExists(atPath: libRoot.appendingPathComponent("arxivOnly2021/paper.pdf").path),
                   "a page that is not a PDF is not kept")
 
+            print("Merging duplicates")
+            let fm = FileManager.default
+            func folderOf(_ key: String) -> String? { store.allPapers().first { $0.meta.citekey == key }?.folder }
+            guard let dupA = folderOf("smithDisks2020a") else { throw ZoteroImportError.missing("smithDisks2020a") }
+            let dupDir = libRoot.appendingPathComponent(dupA)
+            try onePage.write(to: dupDir.appendingPathComponent("paper.pdf"))          // a different PDF
+            if var m = store.meta(folder: dupA) {
+                m.pdf = "paper.pdf"; m.tags.append("from-duplicate")
+                try store.write(m, to: dupDir.appendingPathComponent("meta.json"))
+            }
+            try fm.createDirectory(at: dupDir.appendingPathComponent("notes"), withIntermediateDirectories: true)
+            try "dup note".write(to: dupDir.appendingPathComponent("notes/mine.md"), atomically: true, encoding: .utf8)
+            var mp = LibraryMerge.makePlan(store: store, vault: fx.vault)
+            let smith = mp.groups.first { $0.keep == "smithDisks2020" }
+            check(smith?.merge == [dupA] && smith?.citekey == "smithDisks2020" && smith?.titleOnly == false && smith?.why.contains("annotations") == true,
+                  "the annotated copy is the one kept (got \(String(describing: smith)))")
+            let byTitle = mp.groups.first { Set($0.citekeys.values) == ["preprintSame2020", "publishedSame2020"] }
+            check(byTitle?.titleOnly == true, "a title-only match is flagged for checking")
+            for i in mp.groups.indices where mp.groups[i].titleOnly { mp.groups[i].skip = true }
+            check(store.meta(folder: dupA) != nil, "planning changes nothing")
+            let mr = try LibraryMerge.apply(mp, store: store)
+            let kept = store.meta(folder: "smithDisks2020")
+            check(mr.problems.isEmpty && store.meta(folder: dupA) == nil
+                  && fm.fileExists(atPath: libRoot.appendingPathComponent(".merged/\(dupA)/meta.json").path),
+                  "the merged-away folder moves whole to .merged (problems: \(mr.problems))")
+            check(kept?.aliases.contains("smithDisks2020a") == true && kept?.tags.contains("from-duplicate") == true
+                  && kept?.mergedZoteroKeys == ["ITEMB002"], "its citekey becomes an alias; tags and Zotero key carried over")
+            check(fm.fileExists(atPath: libRoot.appendingPathComponent("smithDisks2020/paper-2.pdf").path)
+                  && (store.read([LibraryAnnotation].self, from: libRoot.appendingPathComponent("smithDisks2020/annotations.json")) ?? []).count == 3,
+                  "the other PDF is kept beside it; annotations untouched")
+            check((try? String(contentsOf: libRoot.appendingPathComponent("smithDisks2020/notes/mine.md"), encoding: .utf8)) == "dup note",
+                  "its notes are copied over")
+            check(store.meta(folder: byTitle?.keep ?? "") != nil && byTitle?.merge.allSatisfy({ store.meta(folder: $0) != nil }) == true,
+                  "a skipped group is left alone")
+            let r3 = try LibraryImporter.run(opts)
+            check(r3.mergedAway == 1 && folderOf("smithDisks2020a") == nil
+                  && store.meta(folder: "smithDisks2020")?.aliases.contains("smithDisks2020a") == true,
+                  "a re-import does not bring a merged paper back")
+
         } catch {
             print("  FAIL  fixture: \(error)")
             failures += 1

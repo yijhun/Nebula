@@ -26,6 +26,7 @@ enum LibraryImporter {
         var created = 0, updated = 0, pdfsCopied = 0, pdfsAlreadyThere = 0
         var annotations = 0, figures = 0, notes = 0, files = 0, paperCandidates = 0
         var restoredFromTrash: [String] = []
+        var mergedAway = 0                  // merged into another paper in Nebula
         var skipped: [String] = []          // "<citekey>: why"
     }
 
@@ -95,7 +96,10 @@ enum LibraryImporter {
         var notesByParent: [Int64: [ZNote]] = [:]
         for n in lib.notes where !n.deleted { if let p = n.parentID { notesByParent[p, default: []].append(n) } }
 
+        // Duplicates merged in Nebula (LibraryMerge) stay merged.
+        let mergedAway = Set(store.allPapers().flatMap { $0.meta.mergedZoteroKeys ?? [] })
         for p in plan.papers {
+            if mergedAway.contains(p.zoteroKey) { result.mergedAway += 1; continue }
             guard let item = itemsByKey[p.zoteroKey] else { result.skipped.append("\(p.citekey): item vanished"); continue }
             let dir = store.folder(p.folder)
             let existing = store.meta(folder: p.folder)
@@ -167,6 +171,13 @@ enum LibraryImporter {
                 meta.lastOpened = e.lastOpened
                 meta.lastPage = e.lastPage
                 if meta.status == nil { meta.status = e.status }
+                // Added in Nebula since: an arXiv PDF, ADS ids, merged duplicates.
+                if meta.pdf == nil { meta.pdf = e.pdf }
+                meta.ids.bibcode = meta.ids.bibcode ?? e.ids.bibcode
+                meta.ids.arxiv = meta.ids.arxiv ?? e.ids.arxiv
+                meta.mergedZoteroKeys = e.mergedZoteroKeys
+                for t in e.tags where !meta.tags.contains(t) { meta.tags.append(t) }
+                for t in e.projects where !meta.projects.contains(t) { meta.projects.append(t) }
                 result.updated += 1
             } else {
                 result.created += 1

@@ -49,6 +49,9 @@ struct PaperMeta: Codable {
     var lastPage: Int?
     /// Where it came from, so a re-import updates instead of duplicating.
     var zoteroKey: String?
+    /// Zotero keys of duplicates merged into this paper, so a re-import
+    /// does not bring them back. Optional: older meta.json files lack it.
+    var mergedZoteroKeys: [String]?
 }
 
 struct LibraryAnnotation: Codable, Equatable {
