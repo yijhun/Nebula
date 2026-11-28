@@ -2,9 +2,10 @@ import SwiftUI
 import PDFKit
 import AppKit
 
-/// The paper reader (PAPER-LIBRARY.md §6): one window, Nebula's own tab bar,
-/// a sidebar (thumbnails / outline / annotations) and one PDFView that shows
-/// the active tab. Library papers keep annotations in annotations.json.
+/// The paper reader (PAPER-LIBRARY.md §6): one window, Nebula's own tab bar
+/// with the library tab first, a sidebar (thumbnails / outline / annotations)
+/// and one PDFView that shows the active tab. Library papers keep
+/// annotations in annotations.json.
 struct ReaderWindowView: View {
     @EnvironmentObject var vault: VaultModel
     @ObservedObject private var session = ReaderSession.shared
@@ -18,53 +19,53 @@ struct ReaderWindowView: View {
         VStack(spacing: 0) {
             ReaderTabBar(session: session, ctrl: ctrl)
             Divider()
-            ReaderToolbar(ctrl: ctrl)
-            Divider()
-            if session.tabs.isEmpty {
-                emptyState
-            } else {
-                HSplitView {
-                    if ctrl.showSidebar {
-                        ReaderSidebar(ctrl: ctrl)
-                            .frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
-                    }
-                    ReaderPDFRep(ctrl: ctrl)
-                        .frame(minWidth: 420, minHeight: 400)
-                    if ctrl.showChat {
-                        Group {
-                            if ctrl.chatAvailable {
-                                ChatWebView(ctrl: ctrl.chat)
-                            } else {
-                                Text(LZ("Claude 只能讀論文庫裡的論文。用 ⌘T 從論文庫打開。"))
-                                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                                    .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
-                            }
-                        }
-                        .frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
-                    }
+            if !session.showLibrary {
+                ReaderToolbar(ctrl: ctrl)
+                Divider()
+            }
+            ZStack {
+                // The paper stays attached under the library tab, so going
+                // back to it is instant and keeps its place.
+                if !session.tabs.isEmpty {
+                    reader
+                        .opacity(session.showLibrary ? 0 : 1)
+                        .allowsHitTesting(!session.showLibrary)
+                        .disabled(session.showLibrary)      // out of the Tab-key loop too
+                        .accessibilityHidden(session.showLibrary)
+                }
+                if session.showLibrary {
+                    LibraryView(index: session.library, session: session, ctrl: ctrl)
                 }
             }
         }
         .frame(minWidth: 760, minHeight: 560)
         .background(WindowAccessor { w in ctrl.installKeys(window: w) })
-        .onAppear { ctrl.vault = vault; if session.requestQuickOpen { ctrl.showQuickOpen = true; session.requestQuickOpen = false } }
-        .onChange(of: session.requestQuickOpen) { _, v in if v { ctrl.showQuickOpen = true; session.requestQuickOpen = false } }
+        .onAppear { ctrl.vault = vault; if session.requestQuickOpen { ctrl.openLibrarySearch(); session.requestQuickOpen = false } }
+        .onChange(of: session.requestQuickOpen) { _, v in if v { ctrl.openLibrarySearch(); session.requestQuickOpen = false } }
         .onDisappear { ctrl.detachCurrent(); session.saveAll() }
-        .sheet(isPresented: $ctrl.showQuickOpen) {
-            ReaderQuickOpen(store: session.store) { folder in
-                ctrl.showQuickOpen = false
-                if let f = folder { session.openFolder(f) }
-            }
-        }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "books.vertical").font(.system(size: 36)).foregroundStyle(.tertiary)
-            Text(LZ("沒有開啟的論文")).foregroundStyle(.secondary)
-            Button(LZ("打開論文…")) { ctrl.showQuickOpen = true }.keyboardShortcut("t", modifiers: .command)
+    private var reader: some View {
+        HSplitView {
+            if ctrl.showSidebar {
+                ReaderSidebar(ctrl: ctrl)
+                    .frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
+            }
+            ReaderPDFRep(ctrl: ctrl)
+                .frame(minWidth: 420, minHeight: 400)
+            if ctrl.showChat {
+                Group {
+                    if ctrl.chatAvailable {
+                        ChatWebView(ctrl: ctrl.chat)
+                    } else {
+                        Text(LZ("Claude 只能讀論文庫裡的論文。用 ⌘T 從論文庫打開。"))
+                            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -75,10 +76,31 @@ struct ReaderTabBar: View {
     @ObservedObject var ctrl: ReaderController
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 2) {
+            libraryTab
+            Divider().frame(height: 16).padding(.horizontal, 2)
+            ScrollView(.horizontal, showsIndicators: false) { tabs }
+        }
+        .padding(.leading, 6)
+    }
+
+    /// Always first and never closes, like Zotero's library tab.
+    private var libraryTab: some View {
+        Label(LZ("論文庫"), systemImage: "books.vertical")
+            .font(.caption).labelStyle(.titleAndIcon)
+            .foregroundStyle(session.showLibrary ? .primary : .secondary)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(session.showLibrary ? Color.accentColor.opacity(0.15) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+            .onTapGesture { session.showLibrary = true }
+            .help(LZ("論文庫：所有論文、專案、標籤（⌘T 搜尋）"))
+    }
+
+    private var tabs: some View {
             HStack(spacing: 2) {
                 ForEach(session.tabs) { t in
-                    let active = t.id == session.activeID
+                    let active = t.id == session.activeID && !session.showLibrary
                     HStack(spacing: 4) {
                         Text(t.title).lineLimit(1).font(.caption)
                             .foregroundStyle(active ? .primary : (session.isLive(t.id) ? .secondary : .tertiary))
@@ -96,12 +118,11 @@ struct ReaderTabBar: View {
                     .onTapGesture { session.select(t.id) }
                     .help(session.isLive(t.id) ? t.url.path : "\(t.url.path)\n\(LZ("休眠中：點了才載入"))")
                 }
-                Button { ctrl.showQuickOpen = true } label: { Image(systemName: "plus") }
+                Button { ctrl.openLibrarySearch() } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless).padding(.horizontal, 8)
-                    .help(LZ("打開論文（⌘T）"))
+                    .help(LZ("從論文庫打開論文（⌘T）"))
             }
-            .padding(.horizontal, 6).padding(.vertical, 4)
-        }
+            .padding(.trailing, 6).padding(.vertical, 4)
     }
 }
 
@@ -346,49 +367,4 @@ struct WindowAccessor: NSViewRepresentable {
         return v
     }
     func updateNSView(_ v: NSView, context: Context) {}
-}
-
-// MARK: - Quick open
-
-struct ReaderQuickOpen: View {
-    let store: PaperLibraryStore
-    let done: (String?) -> Void
-    @State private var query = ""
-    @State private var papers: [(folder: String, meta: PaperMeta)] = []
-    @State private var selection: String?
-
-    private var shown: [(folder: String, meta: PaperMeta)] {
-        let words = query.lowercased().split(separator: " ")
-        guard !words.isEmpty else { return Array(papers.prefix(200)) }
-        return papers.filter { p in
-            let hay = "\(p.meta.citekey) \(p.meta.title) \(p.meta.year) \(p.meta.bibliographic.creators.map(\.family).joined(separator: " "))".lowercased()
-            return words.allSatisfy { hay.contains($0) }
-        }.prefix(200).map { $0 }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            TextField(LZ("搜尋論文庫：作者、標題、年份、citekey"), text: $query)
-                .textFieldStyle(.roundedBorder).padding(10)
-                .onSubmit { done(selection ?? shown.first?.folder) }
-            List(shown, id: \.folder, selection: $selection) { p in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(p.meta.title.isEmpty ? p.meta.citekey : p.meta.title).lineLimit(1)
-                    Text("\(p.meta.bibliographic.creators.first?.family ?? "") \(p.meta.year) · \(p.meta.citekey)\(p.meta.pdf == nil ? " · \(LZ("沒有 PDF"))" : "")")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                .tag(p.folder)
-                .onTapGesture(count: 2) { done(p.folder) }
-            }
-            HStack {
-                Text("\(shown.count) / \(papers.count)").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(LZ("取消")) { done(nil) }.keyboardShortcut(.cancelAction)
-                Button(LZ("打開")) { done(selection ?? shown.first?.folder) }.keyboardShortcut(.defaultAction)
-            }
-            .padding(10)
-        }
-        .frame(width: 620, height: 460)
-        .onAppear { papers = store.allPapers().filter { $0.meta.pdf != nil } }
-    }
 }

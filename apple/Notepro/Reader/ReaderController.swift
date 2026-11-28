@@ -26,7 +26,22 @@ final class ReaderController: ObservableObject {
     @Published var status = ""
     @Published var rows: [ReaderAnnotations.Row] = []
     @Published var outline: [OutlineRow] = []
-    @Published var showQuickOpen = false
+    /// Bumped to put the cursor in the library tab's search field (⌘T).
+    @Published var focusLibrarySearch = 0
+    // The library tab's view state, kept here so it survives switching to a
+    // paper and back.
+    @Published var librarySource: LibrarySource? = .all {
+        didSet {
+            guard librarySource != oldValue else { return }
+            librarySelection = []; libraryFileSelection = []
+            // Recently Opened lists the latest first.
+            if librarySource == .recent { librarySort = [KeyPathComparator(\LibraryEntry.lastOpened, order: .reverse)] }
+        }
+    }
+    @Published var libraryQuery = ""
+    @Published var librarySelection = Set<String>()
+    @Published var libraryFileSelection = Set<String>()
+    @Published var librarySort = [KeyPathComparator(\LibraryEntry.added, order: .reverse)]
     @Published var showChat = UserDefaults.standard.bool(forKey: "readerShowChat") {
         didSet { UserDefaults.standard.set(showChat, forKey: "readerShowChat"); if showChat { bindChat() } }
     }
@@ -45,11 +60,26 @@ final class ReaderController: ObservableObject {
     private var attachedID: UUID?
     private var bag = Set<AnyCancellable>()
     private var keyMonitor: Any?
+    private weak var window: NSWindow?
     private var saveTimer: Timer?
 
     init() {
         session.$generation.dropFirst().receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.attach() }.store(in: &bag)
+        // Going to the library tab keeps the paper attached (hidden), so
+        // coming back is instant; its position and annotations are saved now.
+        session.$showLibrary.removeDuplicates().dropFirst().receive(on: RunLoop.main)
+            .sink { [weak self] on in
+                guard let self else { return }
+                if on {
+                    self.detachCurrent()
+                    self.session.library.reload()   // last opened, pages, annotation counts
+                    self.window?.makeFirstResponder(nil)
+                    self.window?.title = LZ("論文庫")
+                } else if let t = self.session.active {
+                    self.window?.title = t.title
+                }
+            }.store(in: &bag)
         session.$pendingGoto.compactMap { $0 }.receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.applyPendingGoto() }.store(in: &bag)
         chat.readerState = { [weak self] in
@@ -98,7 +128,7 @@ final class ReaderController: ObservableObject {
         if showChat { bindChat() }
         applyPendingGoto()
         status = tab.folder.map { "Library: \($0)" } ?? tab.url.lastPathComponent
-        pv.window?.title = tab.title
+        if !session.showLibrary { pv.window?.title = tab.title }
     }
 
     /// Store the outgoing tab's position and annotations.
@@ -353,27 +383,38 @@ final class ReaderController: ObservableObject {
 
     // MARK: keys
 
-    /// ⌘W closes the tab (the window when none are left), ⌘⇧T reopens,
-    /// ⌃Tab / ⌃⇧Tab switch, ⌘T opens a paper, ⌘F finds, ⌘G next match.
+    /// Show the library tab with the cursor in its search field.
+    func openLibrarySearch() {
+        session.showLibrary = true
+        focusLibrarySearch += 1
+    }
+
+    /// ⌘W closes the paper tab (never the library tab), ⌘⇧T reopens,
+    /// ⌃Tab / ⌃⇧Tab switch (library tab included), ⌘T searches the library,
+    /// ⌘F finds, ⌘G next match. Paper keys do nothing on the library tab.
     func installKeys(window: NSWindow) {
+        self.window = window
+        if session.showLibrary { window.title = LZ("論文庫") }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] e in
             guard let self, let window, e.window === window else { return e }
             let mods = e.modifierFlags.intersection([.command, .shift, .control, .option])
             let ch = e.charactersIgnoringModifiers?.lowercased() ?? ""
+            let library = self.session.showLibrary
             switch (mods, ch) {
             case ([.command], "w"):
+                // The library tab never closes; with no papers open ⌘W closes the window.
+                if library { if self.session.tabs.isEmpty { window.performClose(nil) }; return nil }
                 if let a = self.session.activeID { self.detachCurrent(); self.attachedID = nil; self.session.close(a) }
-                if self.session.tabs.isEmpty { window.performClose(nil) }
                 return nil
             case ([.command, .shift], "t"): self.session.reopenClosed(); return nil
-            case ([.command], "t"): self.showQuickOpen = true; return nil
+            case ([.command], "t"): self.openLibrarySearch(); return nil
             case ([.control], "\t"): self.session.selectNext(1); return nil
             case ([.control, .shift], "\t"): self.session.selectNext(-1); return nil
-            case ([.command], "g"): self.findStep(1); return nil
-            case ([.command, .shift], "g"): self.findStep(-1); return nil
-            case ([.command], "e"): self.highlight(); return nil
-            case ([.command, .option], "i"): self.showChat.toggle(); return nil
+            case ([.command], "g") where !library: self.findStep(1); return nil
+            case ([.command, .shift], "g") where !library: self.findStep(-1); return nil
+            case ([.command], "e") where !library: self.highlight(); return nil
+            case ([.command, .option], "i") where !library: self.showChat.toggle(); return nil
             default: return e
             }
         }

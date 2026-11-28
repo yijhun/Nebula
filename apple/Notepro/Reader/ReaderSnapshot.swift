@@ -42,7 +42,16 @@ enum ReaderSnapshot {
             v.layoutSubtreeIfNeeded()
             guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
             v.cacheDisplay(in: v.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("\(name).png"))
+            // The cache leaves the window background out (transparent → black);
+            // paint it in so black text on it stays readable.
+            let flat = NSImage(size: v.bounds.size, flipped: false) { r in
+                NSColor.windowBackgroundColor.setFill(); r.fill()
+                rep.draw(in: r)
+                return true
+            }
+            if let t = flat.tiffRepresentation, let r = NSBitmapImageRep(data: t) {
+                try? r.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("\(name).png"))
+            }
             // PDFView draws in tiled layers that an off-screen cache does not
             // capture, so the page it is showing is rendered separately.
             var pageInfo = "no page"
@@ -63,7 +72,36 @@ enum ReaderSnapshot {
             print("wrote \(name).png — \(pageInfo) — tabs \(session.tabs.count), live \(session.tabs.filter { session.isLive($0.id) }.count), rows \(ctrl.rows.count), find \(ctrl.findResults.count), status \"\(ctrl.status)\"")
         }
 
-        shot("0-empty")
+        // The library tab: all papers, a project, then a search with one
+        // paper selected so its details show.
+        session.library.reload()
+        for _ in 0..<40 where !session.library.loadedOnce { pump(0.1) }
+        let lib = session.library
+        print("library tab in front \(session.showLibrary); \(lib.entries.count) papers, \(lib.files.count) other files, projects \(lib.projectTree.map(\.path)), \(lib.tagCounts.count) tags")
+        shot("0-library")
+        if let p = lib.projectTree.first(where: { $0.children != nil }) ?? lib.projectTree.first {
+            ctrl.librarySource = .project(p.path)
+            pump(0.2)
+            print("project \(p.path): \(lib.count(.project(p.path))) papers")
+            shot("0b-library-project")
+        }
+        if let t = lib.tagCounts.first?.tag {
+            ctrl.librarySource = .tag(t)
+            print("tag \(t): \(lib.count(.tag(t))) papers")
+            shot("0b2-library-tag")
+        }
+        ctrl.librarySource = .all
+        pump(0.2)
+        ctrl.libraryQuery = "infall"
+        pump(0.2)            // typed first, then clicked, as a person would
+        let hits = LibraryIndex.search(lib.entries, "infall").sorted(using: ctrl.librarySort)
+        if let first = hits.first { ctrl.librarySelection = [first.id] }
+        print("search \"infall\": \(hits.count) papers; selected \(hits.first?.folder ?? "none")")
+        shot("0c-library-search-info")
+        ctrl.librarySource = .files
+        shot("0d-library-files")
+        ctrl.librarySource = .all
+        ctrl.libraryQuery = ""
         // Open up to three papers, the most-annotated one last (active).
         let ordered = papers.sorted { annCount($0.folder, session.store) < annCount($1.folder, session.store) }
         for p in ordered.suffix(3) { session.openFolder(p.folder) }
@@ -96,6 +134,23 @@ enum ReaderSnapshot {
 
         session.selectNext(-1)
         shot("6-switched-tab")
+
+        // To the library tab and back: the paper keeps its page and the
+        // annotations made before leaving are saved.
+        if let pv = ctrl.pdfView, let doc = pv.document, doc.pageCount > 2, let page = doc.page(at: 2) {
+            pv.go(to: page); pump(0.3)
+        }
+        let before = ctrl.pdfView.flatMap { pv in pv.currentPage.flatMap { pv.document?.index(for: $0) } } ?? -1
+        let beforeID = session.activeID
+        let recentBefore = lib.count(.recent)
+        session.showLibrary = true
+        ctrl.librarySource = .recent
+        shot("6b-library-over-tabs")
+        print("recently opened: \(recentBefore) before this session's tabs → \(lib.count(.recent)) after; first \(LibraryIndex.search(lib.entries.filter { LibraryIndex.matches($0, .recent) }, "").sorted(using: ctrl.librarySort).first?.folder ?? "none")")
+        if let id = beforeID { session.select(id) }
+        pump(0.4)
+        let after = ctrl.pdfView.flatMap { pv in pv.currentPage.flatMap { pv.document?.index(for: $0) } } ?? -1
+        print("library and back: page \(before + 1) → \(after + 1), same document \(ctrl.pdfView?.document != nil)")
 
         // Back to the most-annotated paper with the chat open; any
         // suggestions.json in its folder shows as pending Claude rows.
