@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 
 /// `Nebula --library-selftest`: runs the Zotero import planner on a small
 /// synthetic Zotero database (built here, no user data) and checks the plan.
@@ -167,6 +168,27 @@ enum LibrarySelfTest {
             check(pm?.version == "published" && pm?.citekey == "arxivOnly2021" && pm?.ids.doi == "10.3847/x"
                   && pm?.bibliographic.fields["publicationTitle"] == "ApJ",
                   "--apply updates the journal data and keeps the citekey")
+
+            print("arXiv PDFs (offline)")
+            let onePage: Data = {
+                let d = PDFDocument(); d.insert(PDFPage(), at: 0); return d.dataRepresentation() ?? Data()
+            }()
+            var asked: [URL] = []
+            let pdfPlan = LibraryADS.Plan(arxivPDFs: ["arxivOnly2021": "https://arxiv.org/pdf/2101.00001",
+                                                   "smithDisks2020": "https://arxiv.org/pdf/2001.00001"])
+            let got = try LibraryADS.downloadArxiv(store: store, plan: pdfPlan, download: { asked.append($0); return onePage }, pause: 0)
+            check(got.added == ["arxivOnly2021"] && store.meta(folder: "arxivOnly2021")?.pdf == "paper.pdf"
+                  && FileManager.default.fileExists(atPath: libRoot.appendingPathComponent("arxivOnly2021/paper.pdf").path),
+                  "a missing PDF is saved as paper.pdf and recorded in meta.json")
+            check(got.skipped == ["smithDisks2020"] && asked.count == 1, "a paper that has a PDF is not downloaded again")
+            if var m = store.meta(folder: "arxivOnly2021") {          // pretend it is missing again
+                m.pdf = nil; try store.write(m, to: libRoot.appendingPathComponent("arxivOnly2021/meta.json"))
+                try FileManager.default.removeItem(at: libRoot.appendingPathComponent("arxivOnly2021/paper.pdf"))
+            }
+            let bad = try LibraryADS.downloadArxiv(store: store, plan: pdfPlan, download: { _ in Data("<html>".utf8) }, pause: 0)
+            check(bad.failed.count == 1 && store.meta(folder: "arxivOnly2021")?.pdf == nil
+                  && !FileManager.default.fileExists(atPath: libRoot.appendingPathComponent("arxivOnly2021/paper.pdf").path),
+                  "a page that is not a PDF is not kept")
 
         } catch {
             print("  FAIL  fixture: \(error)")

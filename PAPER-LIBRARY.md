@@ -132,6 +132,10 @@ Plus:
 - **Missing PDFs.** If arXiv has the paper, Nebula offers to download it, and
   downloads only after the user confirms. A journal-only PDF opens the
   publisher page in the browser for the user to download; Nebula never logs in.
+  Today this is `Nebula --library-ads` (report only), `--apply` (write the
+  ADS metadata) and `--download-arxiv` (save the missing arXiv PDFs as
+  `paper.pdf`, one request every 3 s, each checked to be a PDF, never over
+  an existing one). First run 2026-11-28: 343 papers updated, 45 PDFs added.
 
 ### 4.5 Organisation
 
