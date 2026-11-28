@@ -8,6 +8,7 @@ import AppKit
 /// annotations in annotations.json.
 struct ReaderWindowView: View {
     @EnvironmentObject var vault: VaultModel
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var session = ReaderSession.shared
     @StateObject private var ctrl: ReaderController
 
@@ -40,7 +41,7 @@ struct ReaderWindowView: View {
         }
         .frame(minWidth: 760, minHeight: 560)
         .background(WindowAccessor { w in ctrl.installKeys(window: w) })
-        .onAppear { ctrl.vault = vault; if session.requestQuickOpen { ctrl.openLibrarySearch(); session.requestQuickOpen = false } }
+        .onAppear { ctrl.vault = vault; AppWindows.windowAppeared(openWindow); if session.requestQuickOpen { ctrl.openLibrarySearch(); session.requestQuickOpen = false } }
         .onChange(of: session.requestQuickOpen) { _, v in if v { ctrl.openLibrarySearch(); session.requestQuickOpen = false } }
         .onDisappear { ctrl.detachCurrent(); session.saveAll() }
     }

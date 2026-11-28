@@ -253,6 +253,23 @@ enum ReaderSelfTest {
             check(!s2.showLibrary && s2.active?.folder == folder, "a paper link opens over the library tab")
             for t in s2.tabs { s2.close(t.id) }
             check(s2.showLibrary && s2.tabs.isEmpty, "closing the last tab shows the library")
+
+            print("\nDock icons and nebula:// links")
+            check(AppRoute(url: URL(string: "nebula://library")!) == .library
+                  && AppRoute(url: URL(string: "NEBULA://Library")!) == .library
+                  && AppRoute(url: URL(string: "nebula:library")!) == .library,
+                  "nebula://library (any case, with or without //) is the library")
+            check(AppRoute(url: URL(string: "nebula://notes")!) == .notes, "nebula://notes is the notes window")
+            let link = URL(string: "nebula://paper/\(folder)?page=2")!
+            check(AppRoute(url: link) == .paper(link), "a paper link from another app opens the paper")
+            check(AppRoute(url: URL(string: "nebula://paper/")!) == nil && AppRoute(url: URL(string: "nebula://settings")!) == nil
+                  && AppRoute(url: URL(string: "https://library")!) == nil, "other links are left alone")
+            let plist = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("../../Launcher/Info.plist").standardized
+            if let d = NSDictionary(contentsOf: plist) {
+                check(d["NebulaTargetBundleID"] as? String == "com.notepro.app" && d["LSUIElement"] as? Bool == true,
+                      "the Nebula Papers icon opens this app and never sits in the Dock itself")
+            }
         } catch {
             print("  FAIL  \(error)")
             failures += 1

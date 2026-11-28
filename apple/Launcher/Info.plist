@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>NebulaPapers</string>
+	<key>CFBundleIconFile</key>
+	<string>PapersIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.notepro.papers</string>
+	<key>CFBundleName</key>
+	<string>Nebula Papers</string>
+	<key>CFBundleDisplayName</key>
+	<string>Nebula Papers</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NebulaTargetBundleID</key>
+	<string>com.notepro.app</string>
+	<key>NebulaTargetApp</key>
+	<string>Nebula.app</string>
+</dict>
+</plist>

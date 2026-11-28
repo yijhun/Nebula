@@ -43,6 +43,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return .terminateLater
     }
+
+    /// The Nebula Dock icon (or Nebula.app opened again) means notes; the
+    /// reader has its own icon (AppRoutes.swift).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainActor.assumeIsolated { AppWindows.showNotes() }
+        return false
+    }
+
+    /// `nebula://` links (the Nebula Papers icon, paper links from other
+    /// apps) come here rather than to SwiftUI, which would open an extra
+    /// window for each one, or, launching the app, none at all.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self, andSelector: #selector(handleURLEvent(_:reply:)),
+            forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+    }
+
+    @objc func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let s = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: s), let route = AppRoute(url: url) else { return }
+        MainActor.assumeIsolated { AppWindows.go(route) }
+    }
 }
 
 /// `Nebula --mcp` runs the Zotero/ADS tool server for the chat panel's AI
@@ -58,6 +80,7 @@ enum NebulaMain {
         if CommandLine.arguments.contains("--zotero-import-report") { ZoteroImportReport.runCLI() }
         if CommandLine.arguments.contains("--library-import") { LibraryImporter.runCLI() }
         if CommandLine.arguments.contains("--library-ads") { LibraryADS.runCLI() }
+        if CommandLine.arguments.contains("--open-library") { MainActor.assumeIsolated { AppWindows.pendingRoute = .library } }
         NoteproApp.main()
     }
 }
@@ -101,8 +124,8 @@ struct NoteproApp: App {
                 .disabled(vault.rootURL == nil)
 
                 Button(LZ("打開論文… Open Paper")) {
-                    ReaderSession.shared.requestQuickOpen = true
-                    openWindow(id: "reader")
+                    AppWindows.openWindow = AppWindows.openWindow ?? openWindow
+                    AppWindows.showLibrary()
                 }
                 .keyboardShortcut("p", modifiers: [.command, .option])
 

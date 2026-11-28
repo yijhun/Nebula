@@ -141,8 +141,17 @@ struct RootView: View {
             .focusedSceneValue(\.tabsModel, tabs)
             .preferredColorScheme(colorScheme)
             .background(MainWindowTracker(id: windowID,
-                                          onWindow: { [weak tabs] w in tabs?.window = w },
+                                          onWindow: { [weak tabs] w in
+                                              tabs?.window = w
+                                              AppWindows.mainWindows.add(w)
+                                              if AppWindows.closeLaunchWindow == windowID { AppWindows.closeLaunchWindow = nil; stepAside(w) }
+                                          },
                                           onClose: { [weak tabs] in tabs?.flushAll() }))
+    }
+
+    private func stepAside(_ w: NSWindow) {
+        w.orderOut(nil)
+        DispatchQueue.main.async { w.close() }
     }
 
     private func lifecycle<V: View>(_ v: V) -> some View {
@@ -157,6 +166,12 @@ struct RootView: View {
             projects.reload(vault: vault.rootURL)
             for e in tabs.allEditors { e.vaultRoot = vault.rootURL }
             if let url = seed?.url { selection = [url]; tabs.open(url) }
+            // Started from the Nebula Papers icon or a paper link: the empty
+            // launch window gives way to the reader (a restored window with
+            // work in it stays).
+            if AppWindows.windowAppeared(openWindow), seed == nil {
+                if let w = tabs.window { stepAside(w) } else { AppWindows.closeLaunchWindow = windowID }
+            }
         }
         .onChange(of: vault.rootURL) { _, root in
             for e in tabs.allEditors { e.vaultRoot = root }

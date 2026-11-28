@@ -58,6 +58,8 @@ final class ReaderController: ObservableObject {
     struct OutlineRow: Identifiable { let id = UUID(); let label: String; let depth: Int; let page: Int }
 
     private var attachedID: UUID?
+    /// The tab whose saved position is still being restored (see attach).
+    private var restoringID: UUID?
     private var bag = Set<AnyCancellable>()
     private var keyMonitor: Any?
     private weak var window: NSWindow?
@@ -112,6 +114,9 @@ final class ReaderController: ObservableObject {
             pv.document = nil; attachedID = nil; rows = []; outline = []; return
         }
         attachedID = id
+        // Until the saved page is back, the view reports page 1: that is not
+        // the reader's position, and must not mark the paper opened.
+        restoringID = id
         pv.document = doc
         pv.displayMode = twoUp ? .twoUpContinuous : .singlePageContinuous
         let pos = tab.position
@@ -119,7 +124,12 @@ final class ReaderController: ObservableObject {
         if let page = doc.page(at: min(pos.page, max(doc.pageCount - 1, 0))) {
             let point = (pos.x == 0 && pos.y == 0) ? CGPoint(x: 0, y: page.bounds(for: .cropBox).maxY)
                                                    : CGPoint(x: pos.x, y: pos.y)
-            DispatchQueue.main.async { pv.go(to: PDFDestination(page: page, at: point)) }
+            DispatchQueue.main.async { [weak self] in
+                pv.go(to: PDFDestination(page: page, at: point))
+                DispatchQueue.main.async { if self?.restoringID == id { self?.restoringID = nil } }
+            }
+        } else {
+            restoringID = nil
         }
         clearFind()
         loadSuggestions()
@@ -133,7 +143,7 @@ final class ReaderController: ObservableObject {
 
     /// Store the outgoing tab's position and annotations.
     func detachCurrent() {
-        guard let id = attachedID, let pv = pdfView, let doc = pv.document,
+        guard let id = attachedID, id != restoringID, let pv = pdfView, let doc = pv.document,
               let tab = session.tabs.first(where: { $0.id == id }) else { return }
         session.updatePosition(id, currentPosition(pv))
         session.saveAnnotations(tab: tab, document: doc)
@@ -147,7 +157,7 @@ final class ReaderController: ObservableObject {
 
     /// Called as the user scrolls: keep the position, cheaply.
     func pageChanged() {
-        guard let id = attachedID, let pv = pdfView else { return }
+        guard let id = attachedID, id != restoringID, let pv = pdfView else { return }
         session.updatePosition(id, currentPosition(pv))
     }
 
@@ -394,7 +404,7 @@ final class ReaderController: ObservableObject {
     /// ⌘F finds, ⌘G next match. Paper keys do nothing on the library tab.
     func installKeys(window: NSWindow) {
         self.window = window
-        if session.showLibrary { window.title = LZ("論文庫") }
+        window.title = session.showLibrary ? LZ("論文庫") : (session.active?.title ?? window.title)
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] e in
             guard let self, let window, e.window === window else { return e }
